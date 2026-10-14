@@ -55,6 +55,7 @@ export const CLI_COMMANDS = Object.freeze({
   listObjdumpArchitectures: "list-objdump-architectures",
   executeRizinCommand: "execute-rizin-command",
   executeRadare2Command: "execute-radare2-command",
+  compareWithRadiff2: "compare-with-radiff2",
   debugWithGdb: "debug-with-gdb",
   debugWithRizin: "debug-with-rizin",
 
@@ -180,6 +181,7 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "list-objdump-architectures": ["inspect_with_objdump"],
   "execute-rizin-command": ["execute_rizin_command"],
   "execute-radare2-command": ["execute_radare2_command"],
+  "compare-with-radiff2": ["compare_with_radiff2"],
   "debug-with-gdb": ["gdb_console"],
   "debug-with-rizin": ["rizin_debug_command"],
   "list-frida-devices": ["list_frida_devices"],

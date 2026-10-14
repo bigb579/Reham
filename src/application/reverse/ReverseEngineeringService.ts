@@ -22,6 +22,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   objdumpInputSchema,
   radare2InputSchema,
+  radiff2InputSchema,
   rizinInputSchema,
 } from "../../domain/reverseEngineering.js";
 import type {
@@ -42,7 +43,8 @@ import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
   | "execute_rizin_command"
-  | "execute_radare2_command";
+  | "execute_radare2_command"
+  | "compare_with_radiff2";
 
 const COMMAND_PROVIDER_IDS: Readonly<
   Record<ReverseEngineeringOperation, string>
@@ -50,6 +52,7 @@ const COMMAND_PROVIDER_IDS: Readonly<
   inspect_with_objdump: "objdump",
   execute_rizin_command: "rizin",
   execute_radare2_command: "radare2",
+  compare_with_radiff2: "radiff2",
 };
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -244,6 +247,26 @@ export class ReverseEngineeringService {
       "execute_radare2_command",
       command,
       input.path,
+      input,
+      options.signal,
+    );
+  }
+
+  compareWithRadiff2(
+    rawInput: unknown,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const parsed = radiff2InputSchema.safeParse(rawInput);
+    if (!parsed.success)
+      return Promise.resolve(
+        err(new AnalysisInputError("compare_with_radiff2")),
+      );
+    const input = parsed.data;
+    const command = this.#commands.radiff2(input);
+    return this.#observe(
+      "compare_with_radiff2",
+      command,
+      input.path_a,
       input,
       options.signal,
     );

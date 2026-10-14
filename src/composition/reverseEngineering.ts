@@ -10,6 +10,10 @@ import {
   RADARE2_PROVIDER_IDENTITY,
 } from "../radare2/Radare2Command.js";
 import {
+  radiff2Command,
+  RADIFF2_PROVIDER_IDENTITY,
+} from "../radare2/Radiff2Command.js";
+import {
   rizinCommand,
   RIZIN_PROVIDER_IDENTITY,
 } from "../rizin/RizinCommand.js";
@@ -46,6 +50,15 @@ export const createReverseEngineeringCommandPort = (
     ),
     arguments: radare2Command(input),
     identity: RADARE2_PROVIDER_IDENTITY,
+  }),
+  radiff2: (input) => ({
+    executable: providerExecutable(
+      environment.REA_RADIFF2_COMMAND ?? "radiff2",
+      environment,
+      platform,
+    ),
+    arguments: radiff2Command(input),
+    identity: RADIFF2_PROVIDER_IDENTITY,
   }),
 });
 

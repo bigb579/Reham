@@ -156,6 +156,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     executesForeignCode: true,
   }),
+  compare_with_radiff2: effects({
+    launchesProcess: true,
+    mutatesSession: true,
+    idempotent: false,
+  }),
   inspect_go_binary: evidence,
   inspect_rust_binary: evidence,
   inspect_sqlite_database: effects({

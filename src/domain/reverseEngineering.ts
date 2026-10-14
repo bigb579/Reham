@@ -50,6 +50,16 @@ export const radare2InputSchema = z
   })
   .strict();
 
+/** Caller-selected radiff2 comparison of two local artifacts. */
+export const radiff2InputSchema = z
+  .object({
+    path_a: z.string().min(1),
+    path_b: z.string().min(1),
+    operation: z.enum(["functions", "bytes"]),
+  })
+  .strict();
+
 export type ObjdumpInput = z.input<typeof objdumpInputSchema>;
 export type RizinInput = z.input<typeof rizinInputSchema>;
 export type Radare2Input = z.input<typeof radare2InputSchema>;
+export type Radiff2Input = z.input<typeof radiff2InputSchema>;

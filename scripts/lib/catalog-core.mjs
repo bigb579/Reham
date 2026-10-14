@@ -55,6 +55,7 @@ const SOURCE_PATHS = {
   rizinDebugProvider: "dist/rizin/RizinDebugSessionManager.js",
   radare2SessionContracts: "dist/contracts/radare2SessionToolContracts.js",
   radare2Provider: "dist/radare2/Radare2Command.js",
+  radiff2Provider: "dist/radare2/Radiff2Command.js",
   radare2SessionProvider: "dist/radare2/Radare2SessionManager.js",
   fridaContracts: "dist/contracts/fridaToolContracts.js",
   fridaProvider: "dist/frida/FridaInstrumentationManager.js",

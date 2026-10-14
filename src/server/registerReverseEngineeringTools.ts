@@ -46,6 +46,7 @@ export const registerReverseEngineeringTools = (
   const objdump = toolContract("inspect_with_objdump");
   const rizin = toolContract("execute_rizin_command");
   const radare2 = toolContract("execute_radare2_command");
+  const radiff2 = toolContract("compare_with_radiff2");
   server.registerTool(
     objdump.name,
     toolRegistrationOptions(objdump),
@@ -168,6 +169,36 @@ export const registerReverseEngineeringTools = (
         },
       );
     },
+  );
+  server.registerTool(
+    radiff2.name,
+    toolRegistrationOptions(radiff2),
+    async (input, context: ServerContext) =>
+      runAdmitted(
+        radiff2,
+        context,
+        withAdmittedAnalysis,
+        delivery,
+        async () => {
+          const result = await logToolExecution(logger, radiff2.name, () =>
+            service.compareWithRadiff2(input, {
+              signal: context.mcpReq.signal,
+            }),
+          );
+          if (!result.ok)
+            return deliverFailure(
+              result.error,
+              radiff2,
+              delivery,
+              recordEvidence,
+            );
+          return delivery.toEvidenceToolResult(
+            result.value,
+            radiff2,
+            recordEvidence?.(result.value),
+          );
+        },
+      ),
   );
   server.registerTool(
     radare2.name,

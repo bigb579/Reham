@@ -88,6 +88,11 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   },
   execute_rizin_command: { path: "/tmp/program", command: "iI" },
   execute_radare2_command: { path: "/tmp/program", command: "ij" },
+  compare_with_radiff2: {
+    path_a: "/tmp/program-a",
+    path_b: "/tmp/program-b",
+    operation: "functions",
+  },
   start_radare2_session: { path: "/tmp/program" },
   list_frida_devices: {},
   list_frida_processes: { device_id: "local" },

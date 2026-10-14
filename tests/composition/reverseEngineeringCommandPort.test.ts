@@ -55,6 +55,15 @@ it("uses provider profiles supplied through the application port", async () => {
           version: null,
         },
       }),
+      radiff2: () => ({
+        executable: "injected-radiff2",
+        arguments: ["--injected", path],
+        identity: {
+          id: "test.radiff2",
+          name: "Injected radiff2",
+          version: null,
+        },
+      }),
     },
     run,
   });
@@ -113,6 +122,15 @@ it("does not reintroduce ambient variables absent from the captured provider env
         identity: {
           id: "test.radare2",
           name: "Captured Radare2",
+          version: null,
+        },
+      }),
+      radiff2: () => ({
+        executable: "captured-radiff2",
+        arguments: [path],
+        identity: {
+          id: "test.radiff2",
+          name: "Captured radiff2",
           version: null,
         },
       }),
@@ -180,4 +198,37 @@ it("exposes execute_radare2_command with the same authority as the rizin tool", 
   expect(contract?.effects).toEqual(
     TOOL_EFFECTS.execute_rizin_command ?? undefined,
   );
+});
+
+it("builds the radiff2 provider profile for function and byte diffs", () => {
+  const port = createReverseEngineeringCommandPort({});
+  const functions = port.radiff2({
+    path_a: "a",
+    path_b: "b",
+    operation: "functions",
+  });
+  expect(functions.executable).toBe("radiff2");
+  expect(functions.arguments).toEqual([
+    "-Cj",
+    "-A",
+    resolve("a"),
+    resolve("b"),
+  ]);
+  expect(functions.identity).toEqual({
+    id: "radiff2",
+    name: "radiff2",
+    version: null,
+  });
+  expect(
+    port.radiff2({ path_a: "a", path_b: "b", operation: "bytes" }).arguments,
+  ).toEqual(["-A", resolve("a"), resolve("b")]);
+});
+
+it("resolves the radiff2 executable from REA_RADIFF2_COMMAND", () => {
+  const port = createReverseEngineeringCommandPort({
+    REA_RADIFF2_COMMAND: "/selected/radiff2",
+  });
+  expect(
+    port.radiff2({ path_a: "a", path_b: "b", operation: "bytes" }).executable,
+  ).toBe("/selected/radiff2");
 });

@@ -210,6 +210,32 @@ export const registerReverseEngineeringCommands = (
         }),
       ),
   });
+  cli.command(CLI_COMMANDS.compareWithRadiff2, {
+    description: "Compare two local artifacts with radiff2",
+    args: z.object({
+      pathA: z.string().min(1).describe("Path to the first artifact."),
+      pathB: z.string().min(1).describe("Path to the second artifact."),
+      operation: z
+        .enum(["functions", "bytes"])
+        .describe("Function-level (JSON) or byte-level diff."),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.compareWithRadiff2, async () => {
+          const result = await executeWithCleanup(service, () =>
+            service.compareWithRadiff2(
+              {
+                path_a: args.pathA,
+                path_b: args.pathB,
+                operation: args.operation,
+              },
+              { signal },
+            ),
+          );
+          return result.ok ? result.value : projectAnalysisError(result.error);
+        }),
+      ),
+  });
   cli.command(CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",

@@ -619,3 +619,51 @@ describe("Radare2 command service", () => {
     }
   });
 });
+
+describe("radiff2 comparison service", () => {
+  it("returns radiff2 evidence for a function-level comparison", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radiff2-"));
+    const pathA = join(directory, "a.bin");
+    const pathB = join(directory, "b.bin");
+    await writeFile(pathA, "fixture-a");
+    await writeFile(pathB, "fixture-b");
+    const service = new ReverseEngineeringService({
+      run: async () => ({ stdout: '[{"match":"MATCH"}]', stderr: "", code: 0 }),
+    });
+
+    try {
+      const result = await service.compareWithRadiff2({
+        path_a: pathA,
+        path_b: pathB,
+        operation: "functions",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.provider.id).toBe("radiff2");
+      expect(result.value.raw_result).toMatchObject({
+        stdout: '[{"match":"MATCH"}]',
+        exit_code: 0,
+        completion_status: "complete",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unknown operation before launching the provider", async () => {
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      run: async () => {
+        invoked = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+    const result = await service.compareWithRadiff2({
+      path_a: "/tmp/a",
+      path_b: "/tmp/b",
+      operation: "unknown" as "functions",
+    });
+    expect(result.ok).toBe(false);
+    expect(invoked).toBe(false);
+  });
+});
