@@ -14,6 +14,7 @@ import type {
 
 interface InjectedControl {
   output(chunk: Buffer | string): void;
+  stderr(chunk: Buffer | string): void;
   exit(code: number | null, signal?: NodeJS.Signals): void;
 }
 
@@ -35,6 +36,9 @@ const createInjectedProcess = (
     const control: InjectedControl = {
       output: (chunk) => {
         stdout.write(chunk);
+      },
+      stderr: (chunk) => {
+        stderr.write(chunk);
       },
       exit: (code, signal) => {
         handle.exitCode = code;
@@ -278,6 +282,22 @@ describe("Radare2SessionManager command handling", () => {
     expect(ninth.ok).toBe(false);
     if (!ninth.ok)
       expect(ninth.error._tag).toBe("AnalysisResourceConstraintError");
+  });
+
+  it("surfaces bounded session stderr in status diagnostics", async () => {
+    const { spawnProcess, control } = createInjectedProcess({
+      startup: (startupControl) => {
+        startupControl.output("\0");
+      },
+    });
+    const manager = new Radare2SessionManager({}, { spawnProcess });
+    const started = await manager.start({ path: "/tmp/f" });
+    if (!started.ok) throw started.error;
+    control.stderr("WARN: ABI mismatch from plugin\n");
+    const status = manager.status(started.value.session_id);
+    expect(status?.recent_stderr).toContain("WARN: ABI mismatch");
+    control.exit(0);
+    await manager.close(started.value.session_id);
   });
 
   it("closes a session and removes it from the manager", async () => {

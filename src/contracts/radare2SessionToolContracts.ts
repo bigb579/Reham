@@ -95,6 +95,7 @@ export const RADARE2_SESSION_TOOL_CONTRACTS = [
       caller_selected_path: z.string(),
       resolved_path: z.string(),
       recent_output: z.array(z.string()),
+      recent_stderr: z.string(),
       output_invalid_utf8: z.boolean(),
       protocol_error: z.string().nullable(),
     }),

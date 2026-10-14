@@ -33,6 +33,7 @@ const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
+const MAX_RECENT_STDERR_BYTES = 4 * 1024;
 
 export const RADARE2_SESSION_PROVIDER_IDENTITY = {
   id: "radare2.session",
@@ -678,6 +679,7 @@ export class Radare2SessionManager {
         readonly caller_selected_path: string;
         readonly resolved_path: string;
         readonly recent_output: readonly string[];
+        readonly recent_stderr: string;
         readonly output_invalid_utf8: boolean;
         readonly protocol_error: string | null;
       }
@@ -690,6 +692,9 @@ export class Radare2SessionManager {
       caller_selected_path: session.callerSelectedPath,
       resolved_path: session.resolvedPath,
       recent_output: [...session.history],
+      recent_stderr: session.supervisor
+        .snapshot()
+        .stderr.text.slice(0, MAX_RECENT_STDERR_BYTES),
       output_invalid_utf8: session.invalidUtf8Observed,
       protocol_error: session.protocolError ?? null,
     };
