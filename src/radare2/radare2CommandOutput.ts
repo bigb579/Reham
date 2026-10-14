@@ -18,3 +18,31 @@ export const projectRadare2JsonOutput = (
     return undefined;
   }
 };
+
+const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  aflj: ["name", "addr", "size"],
+  izzj: ["string", "addr", "length"],
+};
+
+/**
+ * Reduce a known listing command's parsed output to the fields agents
+ * consume most. The full parsed value stays in `parsed`; this is an
+ * additive token-saving view, never a replacement.
+ */
+export const projectRadare2Summary = (
+  command: string,
+  parsed: JsonValue,
+): JsonValue[] | undefined => {
+  const fields = SUMMARY_FIELDS[command.trim()];
+  if (fields === undefined || !Array.isArray(parsed)) return undefined;
+  return parsed.map((entry): JsonValue => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry))
+      return entry;
+    const source = entry as Record<string, unknown>;
+    return Object.fromEntries(
+      fields
+        .filter((field) => source[field] !== undefined)
+        .map((field) => [field, source[field] as JsonValue]),
+    ) as { [key: string]: JsonValue };
+  });
+};

@@ -10,6 +10,7 @@ const commandResult = z.strictObject({
   command: z.string(),
   output: z.string(),
   parsed: z.unknown().optional(),
+  summary: z.array(z.unknown()).optional(),
   output_truncated: z.boolean(),
   output_invalid_utf8: z.literal(true).optional(),
   completion_status: z.enum(["complete", "unknown"]),
@@ -60,7 +61,7 @@ export const RADARE2_SESSION_TOOL_CONTRACTS = [
     ...toolContractMetadata("radare2_command"),
     kind: "native-provider",
     description:
-      "Execute one caller-selected command in a persistent Radare2 session. Returns raw NUL-frame output inline with Evidence; `parsed` carries a best-effort JSON projection when the output parses, and the raw output remains authoritative when it does not. If the command exceeds the output or frame limit, `output_truncated` is true and `completion_status` is `unknown`; retained partial output is returned and the owned session is stopped. Commands can access local files, shell, network, plugins, and target state; effects depend on the command and loaded plugins. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Execute one caller-selected command in a persistent Radare2 session. Returns raw NUL-frame output inline with Evidence; `parsed` carries a best-effort JSON projection when the output parses, and the raw output remains authoritative when it does not. For `aflj` and `izzj` listings, `summary` additionally carries a field-reduced projection (name/addr/size and string/addr/length) that saves tokens; the complete fields stay in `parsed` and the raw output. If the command exceeds the output or frame limit, `output_truncated` is true and `completion_status` is `unknown`; retained partial output is returned and the owned session is stopped. Commands can access local files, shell, network, plugins, and target state; effects depend on the command and loaded plugins. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
     inputSchema: z.strictObject({
       session_id: sessionId,
       command: z

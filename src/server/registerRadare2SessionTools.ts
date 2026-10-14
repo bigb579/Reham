@@ -7,6 +7,7 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { Radare2SessionManager } from "../radare2/Radare2SessionManager.js";
 import { projectRadare2JsonOutput } from "../radare2/radare2CommandOutput.js";
+import { projectRadare2Summary } from "../radare2/radare2CommandOutput.js";
 import { evidenceSchema } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -127,6 +128,13 @@ export const registerRadare2SessionTools = (
         return delivery.toCallToolResult(result, command);
       }
       const projection = projectRadare2JsonOutput(result.value.result.output);
+      const summary =
+        projection === undefined
+          ? undefined
+          : projectRadare2Summary(
+              result.value.result.command,
+              projection.parsed,
+            );
       const observed = result.value.result;
       const commandResult = {
         command: observed.command,
@@ -144,6 +152,7 @@ export const registerRadare2SessionTools = (
           ...(log.origin === undefined ? {} : { origin: log.origin }),
         })),
         ...(projection === undefined ? {} : { parsed: projection.parsed }),
+        ...(summary === undefined ? {} : { summary }),
       };
       const evidence = result.value.evidence;
       return delivery.toEvidenceToolResult(
