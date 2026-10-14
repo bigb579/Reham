@@ -6,6 +6,10 @@ import {
   OBJDUMP_PROVIDER_IDENTITY,
 } from "../objdump/ObjdumpCommand.js";
 import {
+  radare2Command,
+  RADARE2_PROVIDER_IDENTITY,
+} from "../radare2/Radare2Command.js";
+import {
   rizinCommand,
   RIZIN_PROVIDER_IDENTITY,
 } from "../rizin/RizinCommand.js";
@@ -33,6 +37,15 @@ export const createReverseEngineeringCommandPort = (
     ),
     arguments: rizinCommand(input),
     identity: RIZIN_PROVIDER_IDENTITY,
+  }),
+  radare2: (input) => ({
+    executable: providerExecutable(
+      environment.REA_R2_COMMAND ?? "radare2",
+      environment,
+      platform,
+    ),
+    arguments: radare2Command(input),
+    identity: RADARE2_PROVIDER_IDENTITY,
   }),
 });
 

@@ -562,3 +562,60 @@ it("marks signal-terminated provider output incomplete", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+describe("Radare2 command service", () => {
+  it("returns radare2 evidence for a successful command", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radare2-happy-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    const service = new ReverseEngineeringService({
+      run: async () => ({ stdout: "bin info", stderr: "", code: 0 }),
+    });
+
+    try {
+      const result = await service.executeRadare2Command({
+        path,
+        command: "ij",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.provider.id).toBe("radare2");
+      expect(result.value.raw_result).toMatchObject({
+        stdout: "bin info",
+        stderr: "",
+        exit_code: 0,
+        completion_status: "complete",
+      });
+      expect(result.value.limitations.join(" ")).toContain(
+        "not bound to Evidence",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects multiline Radare2 command input before launching the provider", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-radare2-input-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "fixture");
+    let invoked = false;
+    const service = new ReverseEngineeringService({
+      run: async () => {
+        invoked = true;
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    try {
+      const result = await service.executeRadare2Command({
+        path,
+        command: "ij\nq",
+      });
+      expect(result.ok).toBe(false);
+      expect(invoked).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

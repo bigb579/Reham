@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   objdumpInputSchema,
+  radare2InputSchema,
   rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import type { ToolContract } from "./toolContractTypes.js";
@@ -55,6 +56,21 @@ export const REVERSE_ENGINEERING_TOOL_CONTRACTS = [
       {
         title: "Inspect binary information",
         input: { path: "/tmp/program", command: "iI" },
+      },
+    ],
+  },
+  {
+    name: "execute_radare2_command",
+    ...toolContractMetadata("execute_radare2_command"),
+    kind: "native-provider",
+    description:
+      "Execute one caller-selected Radare2 command against a local artifact using the Radare2 CLI profile that suppresses user rcfiles while retaining plugins. Preserves decoded stdout and stderr inline with SHA-256 Evidence, up to a shared 16 MiB combined limit; invalid UTF-8 bytes are represented by replacement characters and flagged in Evidence limitations. output_truncated reports output beyond that limit and completion_status is unknown if buffer enforcement terminated the process. Radare2 commands and retained plugins can execute foreign code, mutate files, access the network, and read files outside the selected artifact; identities and contents of those external inputs are not bound to Evidence. Command effects depend on the Radare2 command and loaded plugins; JSON is command-specific and raw output remains authoritative. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+    inputSchema: radare2InputSchema,
+    outputSchema: evidenceResultOf(commandObservationSchema),
+    examples: [
+      {
+        title: "Inspect binary information as JSON",
+        input: { path: "/tmp/program", command: "ij" },
       },
     ],
   },

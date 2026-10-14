@@ -1,11 +1,13 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { TOOL_EFFECTS } from "../../src/contracts/toolEffects.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
@@ -43,6 +45,15 @@ it("uses provider profiles supplied through the application port", async () => {
         executable: "injected-rizin",
         arguments: ["--injected", path],
         identity: { id: "test.rizin", name: "Injected Rizin", version: null },
+      }),
+      radare2: () => ({
+        executable: "injected-radare2",
+        arguments: ["--injected", path],
+        identity: {
+          id: "test.radare2",
+          name: "Injected Radare2",
+          version: null,
+        },
       }),
     },
     run,
@@ -96,6 +107,15 @@ it("does not reintroduce ambient variables absent from the captured provider env
         arguments: [path],
         identity: { id: "test.rizin", name: "Captured Rizin", version: null },
       }),
+      radare2: () => ({
+        executable: "captured-radare2",
+        arguments: [path],
+        identity: {
+          id: "test.radare2",
+          name: "Captured Radare2",
+          version: null,
+        },
+      }),
     },
     run,
   });
@@ -111,4 +131,53 @@ it("does not reintroduce ambient variables absent from the captured provider env
     else process.env[variable] = previous;
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+it("builds the default radare2 provider profile", () => {
+  const port = createReverseEngineeringCommandPort({});
+  const profile = port.radare2({ path: "a", command: "iI" });
+  expect(profile.executable).toBe("radare2");
+  expect(profile.arguments).toEqual([
+    "-N",
+    "-q",
+    "-e",
+    "scr.color=0",
+    "-c",
+    "iI",
+    resolve("a"),
+  ]);
+  expect(profile.identity).toEqual({
+    id: "radare2",
+    name: "Radare2",
+    version: null,
+  });
+  expect(profile.environmentOverrides).toBeUndefined();
+});
+
+it("resolves the radare2 executable from REA_R2_COMMAND", () => {
+  const port = createReverseEngineeringCommandPort({
+    REA_R2_COMMAND: "/selected/r2",
+  });
+  expect(port.radare2({ path: "a", command: "ij" }).executable).toBe(
+    "/selected/r2",
+  );
+});
+
+it("keeps the radare2 profile free of environment overrides", () => {
+  const port = createReverseEngineeringCommandPort({
+    PATH: "/selected/bin",
+  });
+  expect(
+    port.radare2({ path: "a", command: "ij" }).environmentOverrides,
+  ).toBeUndefined();
+});
+
+it("exposes execute_radare2_command with the same authority as the rizin tool", () => {
+  const contract = REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+    ({ name }) => name === "execute_radare2_command",
+  );
+  expect(contract).toBeDefined();
+  expect(contract?.effects).toEqual(
+    TOOL_EFFECTS.execute_rizin_command ?? undefined,
+  );
 });

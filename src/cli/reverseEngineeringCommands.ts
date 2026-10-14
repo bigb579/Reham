@@ -188,6 +188,28 @@ export const registerReverseEngineeringCommands = (
         }),
       ),
   });
+  cli.command(CLI_COMMANDS.executeRadare2Command, {
+    description: "Execute one Radare2 command against a local artifact",
+    args: z.object({
+      path: z
+        .string()
+        .min(1)
+        .describe("Path to the local artifact to analyze."),
+      command: z
+        .string()
+        .min(1)
+        .describe("One caller-selected Radare2 command."),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.executeRadare2Command, async () => {
+          const result = await executeWithCleanup(service, () =>
+            service.executeRadare2Command(args, { signal }),
+          );
+          return result.ok ? result.value : projectAnalysisError(result.error);
+        }),
+      ),
+  });
   cli.command(CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
