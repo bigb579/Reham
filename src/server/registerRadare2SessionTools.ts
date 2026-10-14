@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { Radare2SessionManager } from "../radare2/Radare2SessionManager.js";
 import { projectRadare2JsonOutput } from "../radare2/radare2CommandOutput.js";
 import { evidenceSchema } from "../domain/evidence.js";
@@ -51,9 +52,36 @@ export const registerRadare2SessionTools = (
         start.name,
         context.mcpReq.signal,
         () =>
-          logToolExecution(logger, start.name, () =>
-            manager.start({ path: input.path }, context.mcpReq.signal),
-          ),
+          logToolExecution(logger, start.name, async () => {
+            const started = await manager.start(
+              { path: input.path },
+              context.mcpReq.signal,
+            );
+            if (!started.ok || input.initial_commands === undefined)
+              return started;
+            for (const command of input.initial_commands) {
+              const executed = await manager.execute(
+                started.value.session_id,
+                command,
+                context.mcpReq.signal,
+              );
+              if (executed.ok && !executed.value.result.command_error) continue;
+              await manager
+                .close(started.value.session_id)
+                .catch(() => undefined);
+              if (!executed.ok) return executed;
+              return {
+                ...executed,
+                ok: false as const,
+                error: new AnalysisOutputError(
+                  start.name,
+                  `An initial Radare2 command reported an error: ${executed.value.result.command_logs.map((log) => log.message).join("; ") || executed.value.result.command}`,
+                  { partialObservation: executed.value.evidence },
+                ),
+              };
+            }
+            return started;
+          }),
         undefined,
         () => manager.retryCleanupFailures(),
         (value) => ({ session_id: value.session_id }),

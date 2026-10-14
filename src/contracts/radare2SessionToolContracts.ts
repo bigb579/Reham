@@ -31,8 +31,22 @@ export const RADARE2_SESSION_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_radare2_session"),
     kind: "native-provider",
     description:
-      "Start a persistent Radare2 analysis session with `-N -q0` on one local artifact. REA runs no analysis automatically; analysis coverage is whatever commands the caller runs. Commands and loaded plugins can execute foreign code, mutate files, access the network, and read files outside the selected artifact; identities and contents of those external inputs are not bound to Evidence. In a shared MCP server, starting this session retires any active binary-analysis session; after session effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first. The session lives in this REA MCP process and is not tied to an inferior or TTY.",
-    inputSchema: z.strictObject({ path: z.string().min(1) }),
+      "Start a persistent Radare2 analysis session with `-N -q0` on one local artifact. Optional caller-selected `initial_commands` (at most 16, single-line, unrestricted like any session command) run once inside the same admission before the session is reported ready; if one fails, the session is closed and the start fails. REA runs no analysis automatically — running `aaa` is the caller's choice via `initial_commands` or a later command; analysis coverage is whatever commands ran. Commands and loaded plugins can execute foreign code, mutate files, access the network, and read files outside the selected artifact; identities and contents of those external inputs are not bound to Evidence. In a shared MCP server, starting this session retires any active binary-analysis session; after session effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first. The session lives in this REA MCP process and is not tied to an inferior or TTY.",
+    inputSchema: z.strictObject({
+      path: z.string().min(1),
+      initial_commands: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .refine(
+              (value) => !/[\r\n\u0000]/u.test(value),
+              "A single command line is required",
+            ),
+        )
+        .max(16)
+        .optional(),
+    }),
     outputSchema: z.strictObject({ session_id: sessionId }),
     examples: [
       {
