@@ -134,33 +134,6 @@ export const registerRadare2SessionTools = (
         }
         return delivery.toCallToolResult(result, command);
       }
-      const projection = projectRadare2JsonOutput(result.value.result.output);
-      const summary =
-        projection === undefined
-          ? undefined
-          : projectRadare2Summary(
-              result.value.result.command,
-              projection.parsed,
-            );
-      const observed = result.value.result;
-      const commandResult = {
-        command: observed.command,
-        output: observed.output,
-        output_truncated: observed.output_truncated,
-        ...(observed.output_invalid_utf8
-          ? { output_invalid_utf8: true as const }
-          : {}),
-        completion_status: observed.completion_status,
-        command_error: observed.command_error,
-        command_code: observed.command_code,
-        command_logs: observed.command_logs.map((log) => ({
-          type: log.type,
-          message: log.message,
-          ...(log.origin === undefined ? {} : { origin: log.origin }),
-        })),
-        ...(projection === undefined ? {} : { parsed: projection.parsed }),
-        ...(summary === undefined ? {} : { summary }),
-      };
       const evidence = result.value.evidence;
       return delivery.toEvidenceToolResult(
         evidence,

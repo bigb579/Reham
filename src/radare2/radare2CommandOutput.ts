@@ -1,4 +1,5 @@
 import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 
 /**
  * Parse trimmed command output as JSON for a lenient projection.
@@ -62,6 +63,10 @@ export const projectRadare2DeliveryViews = (
 } => {
   const projection = projectRadare2JsonOutput(output);
   if (projection === undefined) return {};
+  // JSON.parse accepts non-finite numbers ("1e400" -> Infinity) that
+  // canonical Evidence hashing rejects; an unpresentable value must degrade
+  // to the raw output instead of failing the observation.
+  if (!jsonValueSchema.safeParse(projection.parsed).success) return {};
   const summary = projectRadare2Summary(command, projection.parsed);
   return {
     parsed: projection.parsed,

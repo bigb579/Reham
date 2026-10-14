@@ -59,3 +59,23 @@ describe("projectRadare2Summary", () => {
     expect(projectRadare2Summary("aflj", { not: "array" })).toBeUndefined();
   });
 });
+
+describe("projectRadare2DeliveryViews", () => {
+  it("degrades to raw output when parsed JSON holds non-finite numbers", async () => {
+    const { projectRadare2DeliveryViews } =
+      await import("../../../src/radare2/radare2CommandOutput.js");
+    expect(projectRadare2DeliveryViews("aflj", "1e400")).toEqual({});
+    expect(
+      projectRadare2DeliveryViews("aflj", '[{"name":"main","addr":1e400}]'),
+    ).toEqual({});
+  });
+
+  it("keeps views for finite JSON values", async () => {
+    const { projectRadare2DeliveryViews } =
+      await import("../../../src/radare2/radare2CommandOutput.js");
+    expect(projectRadare2DeliveryViews("aflj", '[{"name":"main"}]')).toEqual({
+      parsed: [{ name: "main" }],
+      summary: [{ name: "main" }],
+    });
+  });
+});
