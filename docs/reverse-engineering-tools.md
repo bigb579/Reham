@@ -88,6 +88,8 @@ Decompilation is available through either surface when the r2ghidra plugin is in
 
 ESIL emulation is available through session commands; REA adds no dedicated tool. A typical workflow on an analyzed binary: `aei` (init VM), `aeim` (init stack), `aeip` (seek to the program counter), `aer PC=<addr>` (set registers; `aer` lists them), then `aes`/`aesu <addr>` to step or step-until, and `ar <reg>` to read state. ESIL is an imprecise interpreter: it cannot emulate syscalls, imports, or SIMD instructions, so scope it to small self-contained chunks such as decryption or unpacking routines.
 
+radare2 leaves relocations unapplied by default (`HINT: Relocs not applied`). REA keeps that engine default, because applying them never changed function or string discovery in measurements and buys cross references at an `aaa` time cost: on macOS Mach-O (`/bin/ls`, `/usr/bin/ssh`) the gain was 0.1-0.3% references for ~2% time, while on a relocation-heavy aarch64 Linux ELF (`libc++_shared.so`, 9.1 MiB) it was +2% references (95,192 → 97,124) for +5% time. When you want the fuller reference set, opt in per command by prefixing `e bin.relocs.apply=true` (for example `e bin.relocs.apply=true; aaa; axtj @ sym.func.main`); large ELF targets benefit the most.
+
 ## Cutter bridge
 
 Cutter commands use the local REA Python bridge and authenticated loopback messages.
