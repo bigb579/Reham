@@ -25,6 +25,13 @@ const probeRadare2 = async (): Promise<string | null> => {
 };
 
 const version = await probeRadare2();
+// CI sets REA_R2_REQUIRED=1 so the lane fails loudly instead of silently
+// skipping when the engine probe cannot establish a usable version.
+const required = process.env.REA_R2_REQUIRED === "1";
+if (required && version === null)
+  throw new Error(
+    "REA_R2_REQUIRED is set but no usable radare2 >= 5.9 was found",
+  );
 
 describe.skipIf(version === null)(
   `real radare2 provider (${version ?? "unavailable"})`,

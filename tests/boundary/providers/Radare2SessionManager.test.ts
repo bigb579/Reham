@@ -52,7 +52,13 @@ const createInjectedProcess = (
       stderr,
       exitCode: null,
       signalCode: null,
-      kill: vi.fn(() => true),
+      kill: vi.fn(() => {
+        if (handle.exitCode !== null) return false;
+        handle.exitCode = null;
+        handle.signalCode = "SIGTERM";
+        queueMicrotask(() => handle.emit("exit", null, "SIGTERM"));
+        return true;
+      }),
       stdin: new Writable({
         write: (chunk: Buffer, _encoding, callback) => {
           const text = chunk.toString("utf8");
@@ -73,6 +79,8 @@ const createInjectedProcess = (
     return {
       process: spawned.handle,
       ownership: {} as SpawnedOwnedProviderProcess["ownership"],
+      cleanup: async () =>
+        ({ cleaned: true as const, signaled: false }) as const,
     };
   });
   return { spawnProcess, control: first.control, written };

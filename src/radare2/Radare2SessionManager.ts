@@ -14,12 +14,18 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import {
+  projectRadare2JsonOutput,
+  projectRadare2Summary,
+  projectRadare2DeliveryViews,
+} from "./radare2CommandOutput.js";
 
 const MAX_SESSIONS = 8;
 const MAX_PENDING_COMMANDS = 16;
@@ -54,6 +60,8 @@ export interface Radare2CommandResult {
     readonly origin?: string;
     readonly message: string;
   }>;
+  readonly parsed?: JsonValue;
+  readonly summary?: ReadonlyArray<JsonValue>;
 }
 
 interface R2Pipe2Reply {
@@ -206,6 +214,7 @@ export class Radare2SessionManager {
   #sessionReservations = 0;
   #closingAll = false;
   readonly #startDrainWaiters: Array<() => void> = [];
+  readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #command: string;
   readonly #frameTimeoutMs: number;
   readonly #startupTimeoutMs: number;
@@ -216,6 +225,7 @@ export class Radare2SessionManager {
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: Radare2SessionManagerOptions = {},
   ) {
+    this.#environment = { ...environment };
     this.#command = environment.REA_R2_COMMAND ?? "radare2";
     this.#frameTimeoutMs = options.frameTimeoutMs ?? FRAME_TIMEOUT_MS;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
@@ -273,7 +283,7 @@ export class Radare2SessionManager {
       launched = await this.#spawnProcess({
         command: this.#command,
         arguments: ["-N", "-q", "-e", "scr.color=0", "-0", resolvedPath],
-        hostEnvironment: process.env,
+        hostEnvironment: this.#environment,
         runId: id,
         stdin: "pipe",
         ...(signal === undefined ? {} : { signal }),
@@ -298,7 +308,7 @@ export class Radare2SessionManager {
       callerSelectedPath: input.path,
       resolvedPath,
       supervisor: new ProviderProcessSupervisor(
-        { process: launched.process, ownsProcessLifetime: false },
+        { process: launched.process, ownsProcessLifetime: true },
         { captureStdout: false, maxDiagnosticBytes: MAX_DIAGNOSTIC_BYTES },
       ),
       frames: [],
@@ -447,7 +457,12 @@ export class Radare2SessionManager {
     let commandSent = false;
     const previous = session.commandTail;
     session.commandTail = new Promise<void>((resolve) => {
-      release = resolve;
+      // A cancelled waiter still holds the queue tail until its predecessor
+      // finishes; releasing it early would let the next command overlap the
+      // still-running one.
+      release = () => {
+        previous.catch(() => undefined).then(() => resolve());
+      };
     });
     try {
       await waitForTurn(previous, signal);
@@ -503,7 +518,7 @@ export class Radare2SessionManager {
         session,
         this.#frameTimeoutMs,
         signal,
-        () => new Radare2CommandTimeoutError("", false),
+        () => new Radare2CommandTimeoutError(bufferedFrameText(session), false),
       );
       if (signal?.aborted) throw new AnalysisCancelledError("radare2_command");
       let cleanupFailure: string | undefined;
@@ -518,7 +533,44 @@ export class Radare2SessionManager {
         if (parsedReply === undefined) {
           session.protocolError =
             "Radare2 returned a frame that is not a r2pipe2 JSON reply; the session was stopped because the protocol no longer holds.";
-          return err(await this.#errorAfterProtocolFailure(session, undefined));
+          const cause = new Error(session.protocolError);
+          const partialEvidence = this.#commandEvidence(
+            sessionId,
+            command,
+            {
+              command,
+              output: boundedText(reply.text),
+              output_truncated: false,
+              completion_status: "unknown",
+              command_error: false,
+              command_code: null,
+              command_logs: [],
+            },
+            [
+              "The reply frame was not valid r2pipe2 JSON; retained frame text is partial and command completion is unknown.",
+              "The owned Radare2 session was stopped because the protocol no longer holds.",
+              "The command is unrestricted and may access local files, the shell, network, or mutate files.",
+            ],
+          );
+          const stopped = await this.#stopSession(session);
+          if (stopped.status === "incomplete")
+            return err(
+              this.#retainCleanupFailure(
+                session,
+                "radare2_command",
+                stopped.reason,
+                { cause, partialObservation: partialEvidence },
+              ),
+            );
+          this.#sessions.delete(sessionId);
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "radare2",
+              "radare2_command",
+              session.protocolError,
+              { cause, partialObservation: partialEvidence },
+            ),
+          );
         }
       }
       const result: Radare2CommandResult = {
@@ -530,6 +582,10 @@ export class Radare2SessionManager {
         command_code: parsedReply === undefined ? null : parsedReply.code,
         command_logs: parsedReply === undefined ? [] : parsedReply.logs,
         ...(reply.invalidUtf8 ? { output_invalid_utf8: true as const } : {}),
+        ...projectRadare2DeliveryViews(
+          command,
+          parsedReply === undefined ? reply.text : parsedReply.res,
+        ),
       };
       const evidence = this.#commandEvidence(sessionId, command, result, [
         "Radare2 command output is the `res` field of one r2pipe2 JSON reply; radare2 reports many command failures with error:false and the reason in `logs`, which is preserved in command_logs.",
@@ -796,6 +852,10 @@ export class Radare2SessionManager {
                 ...log,
               })),
             }),
+        ...(result.parsed === undefined ? {} : { parsed: result.parsed }),
+        ...(result.summary === undefined
+          ? {}
+          : { summary: result.summary.map((entry) => entry) }),
       },
       limitations,
     });
@@ -918,6 +978,19 @@ export class Radare2SessionManager {
     for (const waiter of session.frameWaiters)
       waiter.reject(new Error(message));
     session.frameWaiters.length = 0;
+    // An unusable session must not keep its engine running just because no
+    // command is waiting: start owned cleanup immediately and retire the
+    // session when the stop is verified.
+    if (
+      session.stopAttempt === undefined &&
+      !session.closing &&
+      !session.exited &&
+      session.ready
+    ) {
+      void this.#stopSession(session).then((stopped) => {
+        if (stopped.status !== "incomplete") this.#sessions.delete(session.id);
+      });
+    }
   }
 
   async #stopSession(session: Radare2Session): Promise<StopOutcome> {
@@ -1089,6 +1162,18 @@ const waitForTurn = (
       resolve();
     });
   });
+};
+
+/** Bounded partial frame text for failure diagnostics (never unbounded). */
+const boundedText = (value: string): string =>
+  value.length > 4096 ? `${value.slice(0, 4096)}…` : value;
+
+const bufferedFrameText = (session: Radare2Session): string =>
+  boundedFrameBytes(session).toString("utf8");
+
+const boundedFrameBytes = (session: Radare2Session): Buffer => {
+  const bytes = Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+  return bytes.length > 4096 ? bytes.subarray(0, 4096) : bytes;
 };
 
 const truncateUtf8 = (value: string, maximumBytes: number): string => {

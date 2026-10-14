@@ -7,22 +7,9 @@ import { toolContractMetadata } from "./toolEffects.js";
 const sessionId = z.string().uuid();
 
 const commandResult = z.strictObject({
-  command: z.string(),
-  output: z.string(),
-  parsed: z.unknown().optional(),
-  summary: z.array(z.unknown()).optional(),
-  output_truncated: z.boolean(),
-  output_invalid_utf8: z.literal(true).optional(),
   completion_status: z.enum(["complete", "unknown"]),
+  output_truncated: z.boolean(),
   command_error: z.boolean(),
-  command_code: z.number().int().nullable(),
-  command_logs: z.array(
-    z.strictObject({
-      type: z.string(),
-      origin: z.string().optional(),
-      message: z.string(),
-    }),
-  ),
 });
 
 /** Persistent Radare2 analysis session contracts. */

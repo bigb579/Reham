@@ -66,7 +66,12 @@ export const registerRadare2SessionTools = (
                 command,
                 context.mcpReq.signal,
               );
-              if (executed.ok && !executed.value.result.command_error) continue;
+              if (
+                executed.ok &&
+                !executed.value.result.command_error &&
+                executed.value.result.completion_status === "complete"
+              )
+                continue;
               await manager
                 .close(started.value.session_id)
                 .catch(() => undefined);
@@ -76,7 +81,9 @@ export const registerRadare2SessionTools = (
                 ok: false as const,
                 error: new AnalysisOutputError(
                   start.name,
-                  `An initial Radare2 command reported an error: ${executed.value.result.command_logs.map((log) => log.message).join("; ") || executed.value.result.command}`,
+                  executed.value.result.completion_status === "unknown"
+                    ? `An initial Radare2 command could not complete (output or frame limit reached): ${command}`
+                    : `An initial Radare2 command reported an error: ${executed.value.result.command_logs.map((log) => log.message).join("; ") || executed.value.result.command}`,
                   { partialObservation: executed.value.evidence },
                 ),
               };
@@ -156,14 +163,7 @@ export const registerRadare2SessionTools = (
       };
       const evidence = result.value.evidence;
       return delivery.toEvidenceToolResult(
-        {
-          ...evidence,
-          raw_result: { ...asObject(evidence.raw_result), ...commandResult },
-          normalized_result: {
-            ...asObject(evidence.normalized_result),
-            ...commandResult,
-          },
-        },
+        evidence,
         command,
         recordEvidence?.(evidence),
       );

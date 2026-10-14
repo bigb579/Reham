@@ -10,6 +10,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { registerRadare2SessionTools } from "../../../src/server/registerRadare2SessionTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
 import {
   createReverseEngineeringMcpHarness,
@@ -84,6 +85,11 @@ it("runs a full radare2 session lifecycle through MCP", async () => {
   const commandContent = JSON.stringify(command.structuredContent);
   expect(commandContent).toContain('[{"name":"main"}]');
   expect(commandContent).toContain('"parsed"');
+  // Delivered copies must stay authenticated: the identifier is
+  // content-addressed, so post-hoc field injection would invalidate it.
+  expect(() =>
+    parseEvidence(command.structuredContent as unknown),
+  ).not.toThrow();
 
   const status = await client.callTool({
     name: "radare2_session_status",

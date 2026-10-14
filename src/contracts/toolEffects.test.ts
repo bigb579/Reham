@@ -23,8 +23,6 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
     "starts a debugger session; execution is attributed to gdb_console",
   start_frida_session:
     "spawned targets remain suspended until resume_frida_session",
-  start_radare2_session:
-    "starts an analysis session; command execution is attributed to radare2_command",
   radare2_session_status: "status names session lifecycle, not execution",
   inspect_native_load_image: "states that it does not execute the target",
   resolve_native_call_targets: "states that it does not execute code",
@@ -157,6 +155,7 @@ describe("tool effects", () => {
       "rizin_debug_command",
       "start_adb_activity",
       "start_adb_app",
+      "start_radare2_session",
       "start_rizin_debug_session",
       "stop_adb_app",
       "uninstall_adb_package",

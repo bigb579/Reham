@@ -136,8 +136,13 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     idempotent: false,
   }),
   start_radare2_session: effects({
+    mutatesTarget: true,
     mutatesSession: true,
+    writesFilesystem: true,
     launchesProcess: true,
+    accessesNetwork: true,
+    mayDiscardData: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   radare2_command: effects({

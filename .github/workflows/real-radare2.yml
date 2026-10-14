@@ -33,6 +33,7 @@ concurrency:
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  REA_R2_REQUIRED: "1"
 
 jobs:
   real-radare2:

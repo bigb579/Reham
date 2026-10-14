@@ -46,3 +46,25 @@ export const projectRadare2Summary = (
     ) as { [key: string]: JsonValue };
   });
 };
+
+/**
+ * Build the delivery-only evidence views (`parsed`, and `summary` for known
+ * listings) from one command's effective output. These fields must be part
+ * of the Evidence at construction time: evidence identifiers are
+ * content-addressed, so attaching them later would invalidate the record.
+ */
+export const projectRadare2DeliveryViews = (
+  command: string,
+  output: string,
+): {
+  readonly parsed?: JsonValue;
+  readonly summary?: ReadonlyArray<JsonValue>;
+} => {
+  const projection = projectRadare2JsonOutput(output);
+  if (projection === undefined) return {};
+  const summary = projectRadare2Summary(command, projection.parsed);
+  return {
+    parsed: projection.parsed,
+    ...(summary === undefined ? {} : { summary }),
+  };
+};

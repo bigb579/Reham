@@ -38,6 +38,7 @@ export const inspectRadare2Provider = async (
       try {
         const { stdout } = await execFileAsync(selected, ["-version"], {
           timeout: VERSION_TIMEOUT_MS,
+          env: { ...environment },
         });
         return { ok: true, stdout };
       } catch (cause) {
