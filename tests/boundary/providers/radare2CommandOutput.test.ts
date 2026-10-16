@@ -42,14 +42,25 @@ describe("projectRadare2Summary", () => {
     ]);
   });
 
-  it("reduces izzj entries to string, addr, and length", async () => {
+  it("reduces producer-shaped izzj entries to string, vaddr, paddr, and length", async () => {
     const { projectRadare2Summary } =
       await import("../../../src/radare2/radare2CommandOutput.js");
     expect(
       projectRadare2Summary("izzj", [
-        { addr: 4096, string: "/lib/ld.so", length: 10, section: ".rodata" },
+        {
+          vaddr: 4294984340,
+          paddr: 12288,
+          string: "/lib/ld.so",
+          length: 10,
+          section: ".rodata",
+          type: "ascii",
+          ordinal: 1,
+          size: 11,
+        },
       ]),
-    ).toEqual([{ addr: 4096, string: "/lib/ld.so", length: 10 }]);
+    ).toEqual([
+      { string: "/lib/ld.so", vaddr: 4294984340, paddr: 12288, length: 10 },
+    ]);
   });
 
   it("returns undefined for other commands and non-array output", async () => {
@@ -67,6 +78,14 @@ describe("projectRadare2DeliveryViews", () => {
     expect(projectRadare2DeliveryViews("aflj", "1e400")).toEqual({});
     expect(
       projectRadare2DeliveryViews("aflj", '[{"name":"main","addr":1e400}]'),
+    ).toEqual({});
+    // Integers beyond Number.MAX_SAFE_INTEGER round silently; the projection
+    // must degrade instead of shipping the rounded value.
+    expect(
+      projectRadare2DeliveryViews(
+        "aflj",
+        '[{"name":"main","addr":9007199254740993}]',
+      ),
     ).toEqual({});
   });
 

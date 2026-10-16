@@ -127,7 +127,16 @@ describe("Radare2SessionManager lifecycle", () => {
       expect(spawnProcess).toHaveBeenCalledWith(
         expect.objectContaining({
           command: "/selected/r2",
-          arguments: ["-N", "-q", "-e", "scr.color=0", "-0", artifact],
+          arguments: [
+            "-N",
+            "-q",
+            "-e",
+            "scr.color=0",
+            "-e",
+            "scr.utf8=0",
+            "-0",
+            artifact,
+          ],
           stdin: "pipe",
         }),
       );

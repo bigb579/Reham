@@ -14,6 +14,8 @@ export const radare2Command = (input: Radare2Input): readonly string[] => [
   "-q",
   "-e",
   "scr.color=0",
+  "-e",
+  "scr.utf8=0",
   "-c",
   input.command,
   resolve(input.path),

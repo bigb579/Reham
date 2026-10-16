@@ -160,6 +160,8 @@ it("builds the default radare2 provider profile", () => {
     "-q",
     "-e",
     "scr.color=0",
+    "-e",
+    "scr.utf8=0",
     "-c",
     "iI",
     resolve("a"),

@@ -22,7 +22,10 @@ export const projectRadare2JsonOutput = (
 
 const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
   aflj: ["name", "addr", "size"],
-  izzj: ["string", "addr", "length"],
+  // Real `izzj` emits vaddr/paddr (verified on radare2 6.2.4); there is no
+  // `addr` field, and the two addresses have distinct meanings (virtual vs
+  // file offset).
+  izzj: ["string", "vaddr", "paddr", "length"],
 };
 
 /**
@@ -49,6 +52,48 @@ export const projectRadare2Summary = (
 };
 
 /**
+ * True when every numeric literal outside JSON strings survives a round
+ * trip. String contents are skipped: digits inside strings (leading-zero
+ * dates, character-set names) are not JSON numbers and must not fail the
+ * scan.
+ */
+const jsonNumberLiteralsRoundTrip = (output: string): boolean => {
+  let index = 0;
+  while (index < output.length) {
+    const character = output[index];
+    if (character === '"') {
+      index += 1;
+      while (index < output.length) {
+        if (output[index] === "\\") index += 2;
+        else if (output[index] === '"') {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      continue;
+    }
+    if (character !== "-" && (character! < "0" || character! > "9")) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    index += 1;
+    while (index < output.length && /[\d.eE+-]/u.test(output[index]!)) {
+      // A sign or exponent only continues a JSON number when it follows
+      // digits; the scan below re-checks the collected literal by parsing.
+      index += 1;
+    }
+    const literal = output.slice(start, index);
+    try {
+      if (String(JSON.parse(literal)) !== literal) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
  * Build the delivery-only evidence views (`parsed`, and `summary` for known
  * listings) from one command's effective output. These fields must be part
  * of the Evidence at construction time: evidence identifiers are
@@ -63,10 +108,13 @@ export const projectRadare2DeliveryViews = (
 } => {
   const projection = projectRadare2JsonOutput(output);
   if (projection === undefined) return {};
-  // JSON.parse accepts non-finite numbers ("1e400" -> Infinity) that
-  // canonical Evidence hashing rejects; an unpresentable value must degrade
-  // to the raw output instead of failing the observation.
+  // JSON.parse accepts values the Evidence projection cannot represent
+  // faithfully: non-finite numbers ("1e400" -> Infinity) and integers beyond
+  // Number.MAX_SAFE_INTEGER (9007199254740993 silently rounds). An
+  // unfaithful value must degrade to the raw output instead of shipping a
+  // distorted projection.
   if (!jsonValueSchema.safeParse(projection.parsed).success) return {};
+  if (!jsonNumberLiteralsRoundTrip(output)) return {};
   const summary = projectRadare2Summary(command, projection.parsed);
   return {
     parsed: projection.parsed,

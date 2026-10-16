@@ -282,7 +282,16 @@ export class Radare2SessionManager {
     try {
       launched = await this.#spawnProcess({
         command: this.#command,
-        arguments: ["-N", "-q", "-e", "scr.color=0", "-0", resolvedPath],
+        arguments: [
+          "-N",
+          "-q",
+          "-e",
+          "scr.color=0",
+          "-e",
+          "scr.utf8=0",
+          "-0",
+          resolvedPath,
+        ],
         hostEnvironment: this.#environment,
         runId: id,
         stdin: "pipe",
