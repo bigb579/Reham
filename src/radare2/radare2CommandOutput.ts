@@ -84,13 +84,28 @@ const jsonNumberLiteralsRoundTrip = (output: string): boolean => {
       index += 1;
     }
     const literal = output.slice(start, index);
-    try {
-      if (String(JSON.parse(literal)) !== literal) return false;
-    } catch {
-      return false;
-    }
+    if (!numberLiteralIsFaithful(literal)) return false;
   }
   return true;
+};
+
+/**
+ * True when a JSON number literal keeps its numeric value through
+ * `JSON.parse`. Alternate spellings of exactly representable values
+ * (`1.0`, `1e3`, trailing-zero decimals) are faithful; integers beyond
+ * `Number.MAX_SAFE_INTEGER` and non-finite results are not. Decimal and
+ * exponent literals only need finiteness: their parsed value is the
+ * nearest double by JSON semantics, identical to any other consumer.
+ */
+const numberLiteralIsFaithful = (literal: string): boolean => {
+  try {
+    const value = JSON.parse(literal) as unknown;
+    if (typeof value !== "number" || !Number.isFinite(value)) return false;
+    if (/^-?[0-9]+$/u.test(literal)) return BigInt(literal) === BigInt(value);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /**

@@ -87,6 +87,21 @@ describe("projectRadare2DeliveryViews", () => {
         '[{"name":"main","addr":9007199254740993}]',
       ),
     ).toEqual({});
+    // Faithful alternate spellings keep the projection: 1.0, 1e3, and
+    // trailing-zero decimals are exactly representable even though their
+    // canonical spelling differs.
+    expect(
+      projectRadare2DeliveryViews("aflj", '[{"name":"main","size":1.0}]'),
+    ).toEqual({
+      parsed: [{ name: "main", size: 1 }],
+      summary: [{ name: "main", size: 1 }],
+    });
+    expect(
+      projectRadare2DeliveryViews("aflj", '[{"name":"main","addr":1e3}]'),
+    ).toEqual({
+      parsed: [{ name: "main", addr: 1000 }],
+      summary: [{ name: "main", addr: 1000 }],
+    });
   });
 
   it("keeps views for finite JSON values", async () => {
