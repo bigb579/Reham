@@ -2,7 +2,8 @@
 
 Use this reference to call REA tools and interpret their replies on one MCP
 connection. Start with [tool results](#tool-results), [retained Evidence](#retained-application-evidence-inputs),
-and [session discovery](#identity-and-discovery). See [cancellation](#progress-and-cancellation)
+and [session discovery](#identity-and-discovery). See [transports](#transports)
+for the opt-in HTTP listener, [cancellation](#progress-and-cancellation)
 for partial-result recovery and [first-query deadlines](#ghidra-first-query-deadlines-and-recovery)
 when a cold provider exceeds the client's wait.
 
@@ -417,6 +418,48 @@ File cleanup can also remain after snapshot publication or after profile
 inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
+
+## Transports
+
+stdio is the default transport and the only one that client registrations,
+`rea mcp doctor` and the MCP registry entry describe. `rea mcp --http [--host H]
+[--port N]` is an opt-in alternative that serves the same catalog over the
+streamable HTTP transport at `/mcp`; it replaces stdio for that process rather
+than running beside it. Host and port come from the flags, then `MCP_HOST` and
+`MCP_PORT`, then `127.0.0.1` and an ephemeral port. The bound URL is announced
+as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`)
+at every `REA_LOG_LEVEL`, because an ephemeral port is otherwise unreachable;
+stdout stays unused.
+
+The HTTP server is stateful and serves one client at a time on one server
+instance. `initialize` returns an `Mcp-Session-Id`; `notifications/initialized`
+is acknowledged with `202`; responses arrive as JSON or SSE frames; `DELETE
+/mcp` with the session id ends the session with `200`. Ending a session is not
+a server shutdown: the process keeps listening, the instance keeps its providers
+and the shared active target, and the next client opens a fresh session against
+them. The newest client replaces an open session: an `initialize` that arrives
+while a session is open ends that session instead of being refused, because a
+client that exits without `DELETE` must not wedge the listener; the replaced
+client's open streams are closed and its later requests are refused. Only an
+`initialize` that carries the streamable headers (`Content-Type:
+application/json` and an `Accept` naming both `application/json` and
+`text/event-stream`) and passes the Host and Origin checks can replace a
+session; any other sessionless POST goes to the live transport, which refuses
+it without disturbing the session. Requests that carry no valid session id are
+refused with `400` or `404` as the SDK transport defines. A bind is loopback by
+address class, not spelling, and is classified from the address the listener
+actually bound: any `127.0.0.0/8` address, `::1`, an IPv4-mapped loopback and
+`localhost` names, including a host alias that resolves to one of them. On such
+a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
+the configured name and the bound address are refused with `403`, and a browser
+`Origin` outside that allowlist is refused the same way (a missing `Origin`
+passes); a non-loopback bind relaxes both checks and logs the relaxation. Scoped
+IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
+name them. Listener errors reach the runtime's connection-loss handler only
+after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
+4 MiB limit, and the response budget keeps its stdio-derived floor. The
+listener ends on SIGINT or SIGTERM only, not on stdin EOF, and exits `130` or
+`143` after cleanup settles.
 
 ## Progress and cancellation
 

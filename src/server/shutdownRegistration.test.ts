@@ -3,10 +3,54 @@ import { expect, it } from "vitest";
 import pino from "pino";
 
 import { createShutdown } from "../main/shutdown.js";
-import { registerProcessShutdown } from "../main/processShutdown.js";
-import type { RuntimeDependencies } from "../main/types.js";
-import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
+import {
+  registerProcessShutdown,
+  registerSignalShutdown,
+} from "../main/processShutdown.js";
+import type { McpServerHandle, RuntimeDependencies } from "../main/types.js";
 import { createManagedBinarySession } from "../composition/binary.js";
+
+it("registers only signals for a listener and reports the signal exit status", () => {
+  const signals = new EventEmitter();
+  const statuses: number[] = [];
+  const unregister = registerSignalShutdown(
+    (status) => statuses.push(status),
+    signals,
+  );
+  signals.emit("SIGTERM");
+  signals.emit("SIGINT");
+  expect(statuses).toEqual([143, 130]);
+  unregister();
+  signals.emit("SIGTERM");
+  expect(statuses).toEqual([143, 130]);
+  expect(signals.listenerCount("SIGTERM")).toBe(0);
+});
+
+it("names the signal that fired, passes none for stdin, and ignores stdin when the events omit it", () => {
+  const signals = new EventEmitter();
+  const input = new EventEmitter();
+  const triggers: (string | undefined)[] = [];
+  const withInput = registerProcessShutdown((signal) => triggers.push(signal), {
+    signals,
+    stdin: input,
+  });
+  signals.emit("SIGINT");
+  input.emit("end");
+  expect(triggers).toEqual(["SIGINT", undefined]);
+  withInput();
+  const signalsOnly = registerProcessShutdown(
+    (signal) => triggers.push(signal),
+    { signals },
+  );
+  signals.emit("SIGTERM");
+  input.emit("end");
+  input.emit("close");
+  expect(triggers).toEqual(["SIGINT", undefined, "SIGTERM"]);
+  signalsOnly();
+  signals.emit("SIGINT");
+  expect(triggers).toEqual(["SIGINT", undefined, "SIGTERM"]);
+  expect(input.listenerCount("end")).toBe(0);
+});
 
 const shutdownEvents = ["SIGINT", "SIGTERM", "end", "close"] as const;
 
@@ -51,7 +95,7 @@ it.each(shutdownEvents)(
         };
       },
     };
-    const handle: StdioServerHandle = {
+    const handle: McpServerHandle = {
       close: async () => {
         transportCloseCalls += 1;
         if (transportCloseCalls === 1)
@@ -134,7 +178,7 @@ it("joins concurrent shutdown events and retries only failed owners", async () =
     registerShutdown: (handler) =>
       registerProcessShutdown(handler, { signals, stdin: input }),
   };
-  const handle: StdioServerHandle = {
+  const handle: McpServerHandle = {
     close: async () => {
       transportCloseCalls += 1;
       if (transportCloseCalls === 1)
