@@ -140,6 +140,11 @@ export function* collectSemanticMemberMutationsSteps(
     t.CallExpression | t.OptionalCallExpression
   >();
   const parents = state.parentsByNode;
+  const literalEffects: NonNullable<
+    JavaScriptSemanticAnalysisState["literalMemberEffects"]
+  > = new WeakMap();
+  state.literalMemberEffects = literalEffects;
+  const recordedLiteralEffects = new WeakMap<t.Node, Set<string>>();
   const observablePaths = observableMutationPaths(state);
   const returnedReferences = createSemanticReturnedReferences(state);
   const recordedRequiredEffects = new Set<string>();
@@ -560,6 +565,29 @@ export function* collectSemanticMemberMutationsSteps(
           originAt: current.originAt,
         });
       } else {
+        if (
+          t.isObjectExpression(expression) ||
+          t.isArrayExpression(expression)
+        ) {
+          // A literal may escape through an assignment result before another
+          // binding projects it. Retain effects on the allocation itself,
+          // including writes that stop at an owned slot rather than its value.
+          const identity = JSON.stringify([
+            effect,
+            current.path,
+            mutation?.start,
+            mutation?.end,
+          ]);
+          const recorded = recordedLiteralEffects.get(expression) ?? new Set();
+          if (!recorded.has(identity)) {
+            recorded.add(identity);
+            recordedLiteralEffects.set(expression, recorded);
+            const effects = literalEffects.get(expression) ?? [];
+            effects.push({ kind: effect, path: current.path, node: mutation });
+            literalEffects.set(expression, effects);
+            recordedEffectCount += 1;
+          }
+        }
         for (const value of effect === "escape"
           ? escapedReferenceLeaves(
               expression,
@@ -907,6 +935,7 @@ export function* collectSemanticMemberMutationsSteps(
   }
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
+  state.arrayIterationUnknown = arrayIterationUnknown;
   clearSemanticValueCaches(state);
 }
 
