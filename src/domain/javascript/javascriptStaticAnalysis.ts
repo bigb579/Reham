@@ -2,7 +2,7 @@ import * as t from "@babel/types";
 import { collectElectronWrappedCallPaths } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
 import {
@@ -168,10 +168,7 @@ const finalizeStaticAnalysis = (
           "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
         ]
       : []),
-    ...(accumulator.references.some(
-      ({ value }) =>
-        value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
-    )
+    ...(referencesElectronModule(accumulator.references)
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
     "JavaScript syntax was parsed as data and was never evaluated.",

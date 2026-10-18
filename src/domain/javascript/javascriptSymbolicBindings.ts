@@ -26,6 +26,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   symbolicCondition,
@@ -80,6 +81,16 @@ const containsOwnedReturn = (root: t.Node): boolean => {
   return found;
 };
 
+const MODULE_LOADER_HOSTS: ReadonlySet<string> = new Set([
+  "require",
+  "module",
+  "process",
+  "globalThis",
+  "window",
+  "self",
+  "global",
+]);
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
@@ -113,6 +124,9 @@ export class JavaScriptSymbolicBindings {
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #unsafeExports = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
+  readonly #loaderFreeBindings = new Map<string, boolean>();
+  readonly #loaderFreeBindingsInProgress = new Set<string>();
+  #loaderProofDepth = 0;
   readonly #bootstrapTables: Array<{
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
@@ -121,6 +135,12 @@ export class JavaScriptSymbolicBindings {
   #depth = 0;
   truncated = false;
   unresolved = false;
+  /** An evaluated require named an Electron module. */
+  reachedElectron = false;
+  /** An evaluated require left its module name unresolved. */
+  unresolvedRequire = false;
+  /** A read gave up before an initializer that may supply a module loader. */
+  unresolvedLoader = false;
 
   constructor(
     readonly state: JavaScriptSemanticAnalysisState,
@@ -732,6 +752,7 @@ export class JavaScriptSymbolicBindings {
         initializer.node.end > point)
     ) {
       this.unresolved = true;
+      if (!this.#isLoaderFreeBinding(binding)) this.unresolvedLoader = true;
       return symbolicUnknown("initializer not available at this read");
     }
     if (this.state.conditionallySkippedExpressions.has(initializer.node))
@@ -745,6 +766,160 @@ export class JavaScriptSymbolicBindings {
       });
     }
     return value;
+  }
+
+  #isLoaderFreeBinding(binding: JavaScriptSemanticBindingState): boolean {
+    const cached = this.#loaderFreeBindings.get(binding.bindingId);
+    if (cached !== undefined) return cached;
+    if (this.#loaderFreeBindingsInProgress.has(binding.bindingId)) return false;
+    if (this.#loaderProofDepth >= 128) {
+      this.truncated = true;
+      return false;
+    }
+    const initializer =
+      binding.definitions.length === 1 &&
+      ["variable", "function", "class"].includes(
+        binding.definitions[0]?.kind ?? "",
+      ) &&
+      binding.initializers.length === 1
+        ? binding.initializers[0]
+        : undefined;
+    if (initializer === undefined) {
+      this.#loaderFreeBindings.set(binding.bindingId, false);
+      return false;
+    }
+    this.#loaderFreeBindingsInProgress.add(binding.bindingId);
+    this.#loaderProofDepth += 1;
+    try {
+      const loaderFree = this.#isLoaderFree(initializer.node);
+      this.#loaderFreeBindings.set(binding.bindingId, loaderFree);
+      return loaderFree;
+    } finally {
+      this.#loaderProofDepth -= 1;
+      this.#loaderFreeBindingsInProgress.delete(binding.bindingId);
+    }
+  }
+
+  #isLoaderFree(node: t.Node): boolean {
+    if (!this.#chargeLoaderProof()) return false;
+    if (t.isTemplateLiteral(node))
+      return (
+        node.quasis.every(
+          (quasi) =>
+            this.#chargeLoaderProof() &&
+            !ELECTRON_MODULE.test(quasi.value.cooked ?? quasi.value.raw),
+        ) &&
+        node.expressions.every((expression) => this.#isLoaderFree(expression))
+      );
+    if (t.isLiteral(node)) return true;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(this.state, node, node.name);
+      return binding !== undefined
+        ? this.#isLoaderFreeBinding(binding)
+        : !semanticResolutionBlocked(this.state, node, node.name) &&
+            !MODULE_LOADER_HOSTS.has(node.name);
+    }
+    if (t.isUnaryExpression(node))
+      return node.operator === "typeof" || this.#isLoaderFree(node.argument);
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
+      return this.#isLoaderFree(node.left) && this.#isLoaderFree(node.right);
+    if (t.isConditionalExpression(node))
+      return (
+        this.#isLoaderFree(node.test) &&
+        this.#isLoaderFree(node.consequent) &&
+        this.#isLoaderFree(node.alternate)
+      );
+    if (t.isSequenceExpression(node))
+      return node.expressions.every((expression) =>
+        this.#isLoaderFree(expression),
+      );
+    if (t.isObjectExpression(node))
+      return node.properties.every((property) => {
+        if (!this.#chargeLoaderProof()) return false;
+        if (t.isSpreadElement(property))
+          return this.#isLoaderFree(property.argument);
+        if (t.isObjectMethod(property))
+          return (
+            (!property.computed || this.#isLoaderFree(property.key)) &&
+            this.#isLoaderFreeFunction(property)
+          );
+        return (
+          (!property.computed || this.#isLoaderFree(property.key)) &&
+          this.#isLoaderFree(property.value)
+        );
+      });
+    if (t.isArrayExpression(node))
+      return node.elements.every(
+        (element) =>
+          element === null ||
+          (t.isSpreadElement(element)
+            ? this.#chargeLoaderProof() && this.#isLoaderFree(element.argument)
+            : this.#isLoaderFree(element)),
+      );
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+      return (
+        (t.isLiteral(node.object) ||
+          t.isObjectExpression(node.object) ||
+          t.isArrayExpression(node.object)) &&
+        this.#isLoaderFree(node.object) &&
+        (!node.computed || this.#isLoaderFree(node.property))
+      );
+    if (t.isFunction(node)) return this.#isLoaderFreeFunction(node);
+    return false;
+  }
+
+  #isLoaderFreeFunction(node: t.Function): boolean {
+    const functionScope = this.state.scopeByNode.get(node);
+    if (functionScope === undefined) return false;
+    let loaderFree = true;
+    traverseJavaScriptAst(node, {
+      skip: () => !loaderFree,
+      enter: (child, parent, readAncestors) => {
+        if (!this.#chargeLoaderProof()) {
+          loaderFree = false;
+          return;
+        }
+        if (
+          (t.isIdentifier(child) &&
+            parent !== null &&
+            t.isReferenced(child, parent, readAncestors().at(-2)) &&
+            !this.#isLoaderFreeFunctionReference(
+              child,
+              functionScope.scopeId,
+            )) ||
+          t.isImport(child) ||
+          t.isImportExpression(child) ||
+          (t.isMetaProperty(child) && child.meta.name === "import") ||
+          (t.isStringLiteral(child) &&
+            ELECTRON_MODULE.test(child.value) &&
+            !(t.isBinaryExpression(parent) && parent.operator === "+"))
+        )
+          loaderFree = false;
+      },
+    });
+    return loaderFree;
+  }
+
+  #isLoaderFreeFunctionReference(
+    node: t.Identifier,
+    functionScopeId: string,
+  ): boolean {
+    const binding = resolveSemanticBindingState(this.state, node, node.name);
+    if (binding === undefined)
+      return (
+        !semanticResolutionBlocked(this.state, node, node.name) &&
+        !MODULE_LOADER_HOSTS.has(node.name)
+      );
+    return (
+      this.#scopeContains(binding.scopeId, functionScopeId) ||
+      this.#isLoaderFreeBinding(binding)
+    );
+  }
+
+  #chargeLoaderProof(): boolean {
+    if (--this.#remainingEvaluations >= 0) return true;
+    this.truncated = true;
+    return false;
   }
 
   #readBoundary(
@@ -1111,10 +1286,13 @@ export class JavaScriptSymbolicBindings {
           value.path.join(".") === "require"
         ) {
           const spec = args[0];
-          result =
-            spec?.kind === "literal" && typeof spec.value === "string"
-              ? { kind: "external", path: [spec.value] }
-              : symbolicUnknown("dynamic require");
+          if (spec?.kind === "literal" && typeof spec.value === "string") {
+            if (ELECTRON_MODULE.test(spec.value)) this.reachedElectron = true;
+            result = { kind: "external", path: [spec.value] };
+          } else {
+            this.unresolvedRequire = true;
+            result = symbolicUnknown("dynamic require");
+          }
         } else if (
           value.kind !== "function" ||
           this.#activeFunctions.has(value.node)
