@@ -32,6 +32,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import { range, calleeName } from "./javascriptStaticAnalysisHelpers.js";
 import { ipcDescriptor } from "./electronStaticAnalysisIpc.js";
+import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
   symbolicDefiniteExit,
   symbolicLogicalRight,
@@ -232,7 +233,7 @@ export const collectElectronWrappedCallPaths = (
     return symbolicVariants(callee).some(
       (callee) =>
         callee.kind === "external" &&
-        identity.intactExport(callee.path) &&
+        ELECTRON_MODULE.test(callee.path[0] ?? "") &&
         callee.path.slice(1).join(".") ===
           "contextBridge.exposeInIsolatedWorld",
     )
@@ -600,7 +601,8 @@ export const collectElectronWrappedCallPaths = (
       } else if (callee.kind === "external") {
         const path = callee.path;
         const endpoint = path.join(".");
-        if (identity.intactExport(path)) {
+        // The symbolic property owner validated each export at its capture.
+        if (ELECTRON_MODULE.test(path[0] ?? "")) {
           const descriptor = ipcDescriptor(path.slice(1));
           const exposure =
             path.length === 3 && path[1] === "contextBridge"

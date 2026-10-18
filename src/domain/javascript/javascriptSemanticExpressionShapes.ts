@@ -1,4 +1,5 @@
 import {
+  semanticBindingMayHaveBlockFunctionWrite,
   semanticOpaqueBindingReadMayHaveChanged,
   semanticOpaqueNameMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
@@ -48,7 +49,6 @@ export const createSemanticExpressionShapeResolver = (
   // Most modules have no named child arguments. Collect source-wide blockers
   // only when a query actually needs a named binding or ambient undefined.
   let blocked: boolean | undefined;
-  const blockFunctionNames = new Set<string>();
   const namedProofBlocked = (): boolean => {
     if (blocked !== undefined) return blocked;
     blocked = false;
@@ -57,13 +57,6 @@ export const createSemanticExpressionShapeResolver = (
         blocked ||=
           isErasedJavaScriptDeclaration(node) ||
           isUnmodeledJavaScriptRuntimeScope(node);
-        if (
-          javaScriptRuntimeContext(state.program) !== "module" &&
-          t.isFunctionDeclaration(node) &&
-          node.id != null &&
-          !hoistedFunction(node)
-        )
-          blockFunctionNames.add(node.id.name);
       },
     });
     return blocked;
@@ -100,13 +93,10 @@ export const createSemanticExpressionShapeResolver = (
         )
           return "unknown";
       }
-      // Annex B may copy a block function into an outer var without an indexed
-      // assignment. Keep same-named vars unknown rather than model that copy.
       if (
         namedProofBlocked() ||
         semanticOpaqueBindingReadMayHaveChanged(binding, node, state) ||
-        (binding.declarationKinds.has("var") &&
-          blockFunctionNames.has(binding.name))
+        semanticBindingMayHaveBlockFunctionWrite(binding, state)
       )
         return "unknown";
       const initializer = semanticStableInitializer(binding, state);

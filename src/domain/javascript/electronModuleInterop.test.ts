@@ -365,6 +365,29 @@ describe("Electron module interop pattern writes", () => {
 
 describe("Electron module interop intrinsic captures", () => {
   it.each([
+    "__hasOwnProp.__proto__={call(){return true}};",
+    "Object.prototype.hasOwnProperty.__proto__={call(){return true}};",
+  ])("rejects a replaced supplier of a live helper read: %s", (write) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP} ${write} ${IMPORT} ${WRAP} ${WINDOW}
+    `);
+    expect(analysis.electron.browser_windows).toEqual([]);
+  });
+
+  it.each([
+    "Object.prototype.hasOwnProperty=custom;",
+    "Function.prototype.__proto__={call(){return true}};",
+  ])(
+    "preserves captured operations with an intact helper supplier: %s",
+    (write) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP} ${write} ${IMPORT} ${WRAP} ${WINDOW}
+    `);
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+    },
+  );
+
+  it.each([
     "var captured = Object.defineProperty;",
     "const {defineProperty:captured} = Object;",
     "var first = Object.defineProperty; const captured = first;",

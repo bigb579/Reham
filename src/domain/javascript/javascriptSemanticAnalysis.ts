@@ -1,8 +1,12 @@
 import {
   createSemanticOpaqueGlobalObserver,
   indexSemanticOpaqueEffects,
+  indexSemanticPossibleGlobalEvalRoot,
   semanticOpaqueBindingEffects,
   semanticBindingCanBeRebound,
+  semanticOpaqueGlobalMayHaveChanged,
+  semanticOpaqueBindingReadMayHaveChanged,
+  semanticGlobalBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 import * as t from "@babel/types";
 
@@ -60,6 +64,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
+import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -120,10 +125,12 @@ interface BindPatternInput {
   readonly fallbackSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly selection?: t.AssignmentPattern;
   }[];
   readonly requiredSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly selection?: t.AssignmentPattern;
   }[];
 }
 
@@ -173,7 +180,8 @@ function* indexSemanticAmbientWritesSteps(
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
-    createSemanticOpaqueGlobalObserver(state),
+    (ambientPaths, retainGlobal) =>
+      createSemanticOpaqueGlobalObserver(state, ambientPaths, retainGlobal),
   );
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
@@ -792,7 +800,12 @@ export function* classifyParsedJavaScriptElectronBindingsSteps(
 /** Shared lexical identity and visible-write proof for direct and wrapped calls. */
 export interface JavaScriptElectronIdentity {
   readonly bindings: ReadonlyMap<number, readonly string[]>;
-  readonly intactExport: (path: readonly (string | null)[]) => boolean;
+  /** Check newly selected properties; an already captured prefix is unchanged. */
+  readonly intactExport: (
+    path: readonly (string | null)[],
+    read?: t.Node,
+    capturedPrefixLength?: number,
+  ) => boolean;
   readonly exportPath: (root: t.Node) => readonly string[] | undefined;
 }
 
@@ -800,12 +813,17 @@ export function* indexJavaScriptElectronIdentitySteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, JavaScriptElectronIdentity> {
+  yield* indexSemanticAmbientWritesSteps(state);
   const facts = new Map<number, readonly string[]>();
   const interop = createSemanticModuleInterop(state);
   const writes = new SemanticPropertyPathCoverage();
+  const exportWrites: {
+    readonly node: t.Node;
+    readonly path: readonly (string | null)[];
+  }[] = [];
   let collectedWrites = false;
   const exportsByBinding = new Map<string, readonly string[] | null>();
-  const rootExport = (root: t.Node): readonly string[] | undefined => {
+  const nominalRootExport = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
@@ -835,13 +853,11 @@ export function* indexJavaScriptElectronIdentitySteps(
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
-      const exported = kind === "binding" ? undefined : rootExport(root);
+      const exported = kind === "binding" ? undefined : nominalRootExport(root);
       const path =
         exported === undefined
           ? (interop.intrinsicPath(root) ??
-            (kind === "member"
-              ? interop.boundIntrinsic(root)?.path
-              : undefined))
+            (kind === "member" ? interop.boundValuePath(root) : undefined))
           : ["electron", ...exported];
       return path === undefined ? [] : [[...path, ...members]];
     },
@@ -849,14 +865,115 @@ export function* indexJavaScriptElectronIdentitySteps(
     interop.staticString,
     interop.isFreshObject,
     (node, path) => {
-      if (path[0] === "electron") writes.retain(path);
-      else interop.retainWrite(node, path);
+      if (path[0] === "electron") {
+        writes.retain(path);
+        exportWrites.push({ node, path });
+      } else interop.retainWrite(node, path);
     },
   );
   collectedWrites = true;
-  const intactExport = (path: readonly (string | null)[]): boolean =>
+  interface CapturedExport {
+    readonly path: readonly string[];
+    readonly captures: readonly t.Node[];
+  }
+  const capturedExports = new WeakMap<t.Node, CapturedExport>();
+  // Origins own the selected path; retain only where each selection occurred.
+  // Copying an alias retains those reads, while selecting another member adds
+  // a fresh read. The shared effect-order owner decides which writes precede it.
+  const capturedRootExport = (
+    root: t.Node,
+    active = new Set<string>(),
+  ): CapturedExport | undefined => {
+    const cached = capturedExports.get(root);
+    if (cached !== undefined) return cached;
+    const path = nominalRootExport(root);
+    if (path === undefined) return undefined;
+    let captured: CapturedExport = { path, captures: path.map(() => root) };
+    if (t.isIdentifier(root)) {
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (
+        binding === undefined ||
+        active.has(binding.bindingId) ||
+        semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+        semanticGlobalBindingReadMayHaveChanged(binding, root, state)
+      )
+        return undefined;
+      const initializer = semanticStableInitializer(binding, state);
+      if (initializer !== undefined && binding.directOrigins.length === 0) {
+        const { root: source, members } = electronMemberPath(initializer.node);
+        const inherited = capturedRootExport(
+          source,
+          new Set(active).add(binding.bindingId),
+        );
+        // A rejected source binding cannot regain its nominal origin merely
+        // because its value was copied into an immutable alias afterwards.
+        if (inherited === undefined && nominalRootExport(source) !== undefined)
+          return undefined;
+        const selected = [...members, ...initializer.projection];
+        const selectedPath = [...(inherited?.path ?? []), ...selected];
+        if (
+          inherited !== undefined &&
+          selectedPath.length === path.length &&
+          selectedPath.every((key, index) => key === path[index])
+        )
+          captured = {
+            path,
+            captures: [
+              ...inherited.captures,
+              ...selected.map(() => initializer.node),
+            ],
+          };
+      }
+    }
+    capturedExports.set(root, captured);
+    return captured;
+  };
+  const intactCapturedExport = (
+    path: readonly (string | null)[],
+    captures: readonly (t.Node | undefined)[],
+  ): boolean =>
     ELECTRON_MODULE.test(path[0] ?? "") &&
-    !writes.covers(["electron", ...path.slice(1)]);
+    !captures.some(
+      (capture) =>
+        capture !== undefined &&
+        semanticOpaqueGlobalMayHaveChanged(capture, state),
+    ) &&
+    (!writes.covers(["electron", ...path.slice(1)]) ||
+      !exportWrites.some(({ node, path: written }) => {
+        const capture = captures[written.length - 1];
+        return (
+          capture !== undefined &&
+          written.length <= path.length &&
+          written.every(
+            (key, index) => index === 0 || key === null || key === path[index],
+          ) &&
+          semanticEffectTiming(capture, node, state) !== "after"
+        );
+      }));
+  const intactExport = (
+    path: readonly (string | null)[],
+    read?: t.Node,
+    capturedPrefixLength = 1,
+  ): boolean =>
+    read === undefined
+      ? ELECTRON_MODULE.test(path[0] ?? "") &&
+        !writes.covers(["electron", ...path.slice(1)])
+      : intactCapturedExport(
+          path,
+          path.map((_, index) =>
+            index < capturedPrefixLength ? undefined : read,
+          ),
+        );
+  const rootExport = (root: t.Node): readonly string[] | undefined => {
+    const captured = capturedRootExport(root);
+    return captured !== undefined &&
+      intactCapturedExport(
+        ["electron", ...captured.path],
+        [undefined, ...captured.captures],
+      )
+      ? captured.path
+      : undefined;
+  };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
       if (
@@ -866,12 +983,15 @@ export function* indexJavaScriptElectronIdentitySteps(
       )
         return;
       const { root, members } = electronMemberPath(node.callee);
-      const exported = rootExport(root);
+      const captured = capturedRootExport(root);
       if (
-        exported !== undefined &&
-        intactExport(["electron", ...exported, ...members])
+        captured !== undefined &&
+        intactCapturedExport(
+          ["electron", ...captured.path, ...members],
+          [undefined, ...captured.captures, ...members.map(() => node.callee)],
+        )
       )
-        facts.set(root.start ?? -1, exported);
+        facts.set(root.start ?? -1, captured.path);
     },
   });
   return { bindings: facts, intactExport, exportPath: rootExport };
@@ -911,7 +1031,8 @@ const electronRequireOrigin = (
   state: JavaScriptSemanticAnalysisState,
 ) =>
   semanticRequireOrigin(node, state) ??
-  semanticBundledRequireOrigin(node, state);
+  semanticBundledRequireOrigin(node, state) ??
+  semanticRequireShimOrigin(node, state);
 
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
@@ -979,14 +1100,6 @@ const createState = (
   };
 };
 
-const globalEvalRoots = new Set([
-  "eval",
-  "globalThis",
-  "global",
-  "window",
-  "self",
-]);
-
 function* collectDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -1016,7 +1129,9 @@ function* collectDefinitionsSteps(
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||
-        t.isForOfStatement(node)
+        t.isForOfStatement(node) ||
+        t.isObjectPattern(node) ||
+        t.isArrayPattern(node)
       )
         needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
@@ -1081,10 +1196,7 @@ function* collectDefinitionsSteps(
         state,
       });
       bindInnerDeclaration(node, parent, scope, state);
-      // Every supported global eval origin starts with one of these decoded
-      // identifiers, including computed properties and destructured aliases.
-      if (t.isIdentifier(node) && globalEvalRoots.has(node.name))
-        state.opaqueEffects.mayReferenceGlobalEval = true;
+      indexSemanticPossibleGlobalEvalRoot(node, state);
       if (
         t.isCallExpression(node) &&
         t.isIdentifier(unwrapJavaScriptExpression(node.callee).node, {
@@ -1725,7 +1837,9 @@ const bindPattern = (input: BindPatternInput): void => {
           : (initializer ?? pattern.right),
       requiredSources: [
         ...(requiredSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [{ node: initializer, projection, selection: pattern }]),
       ],
     });
     bindPattern({
@@ -1739,7 +1853,9 @@ const bindPattern = (input: BindPatternInput): void => {
       referenceOnly: true,
       fallbackSources: [
         ...(fallbackSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [{ node: initializer, projection, selection: pattern }]),
       ],
       ...(requiredSources === undefined ? {} : { requiredSources }),
     });

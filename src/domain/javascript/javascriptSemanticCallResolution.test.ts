@@ -86,6 +86,13 @@ it.each([
   ["if(flag){cb=fallback;cb();}", true],
   ["if(flag)cb=fallback;cb();", false],
   ["cb ||= fallback;cb();", false],
+  ["cb=fallback;{cb();}", true],
+  ["cb=fallback;if(flag){cb();}", true],
+  ["cb=fallback;while(flag){cb();}", true],
+  ["{cb();}cb=fallback;", false],
+  ["(()=>{cb();})();cb=fallback;", false],
+  ["function use(){cb();}use();cb=fallback;", false],
+  ["class Hold{value=cb()}cb=fallback;", false],
 ] as const)(
   "reports initializer coverage at the read: %s",
   (body, expected) => {

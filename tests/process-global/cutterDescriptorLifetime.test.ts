@@ -34,6 +34,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { CutterBridgeClient } from "../../src/cutter/CutterBridgeClient.js";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -220,6 +221,17 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let retained!: () => void;
+  const firstFailure = new Promise<void>((resolve) => {
+    retained = resolve;
+  });
+  const retain = ArtifactResourceScope.prototype.retain;
+  const retention = vi
+    .spyOn(ArtifactResourceScope.prototype, "retain")
+    .mockImplementation(function (this: ArtifactResourceScope, owner) {
+      retain.call(this, owner);
+      if (owner.resource.startsWith(root)) retained();
+    });
   fault.onClose = async (handle) => {
     if (handle === fault.handles[0]) return;
     entered();
@@ -230,8 +242,9 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
     .listSessions({ signal: controller.signal })
     .catch((cause: unknown) => cause);
   try {
-    await waiting;
-    await new Promise((resolve) => setImmediate(resolve));
+    // Open order does not establish read/close order. Wait until the first
+    // failed close has recorded its outcome and transferred its exact owner.
+    await Promise.all([waiting, firstFailure]);
     controller.abort(reason);
     release();
     const failure = await reading;
@@ -257,6 +270,7 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
     await client.close();
     expect(failure.cleanupIncomplete).toBe(false);
   } finally {
+    retention.mockRestore();
     release();
     fault.onClose = undefined;
     fault.blocked.clear();

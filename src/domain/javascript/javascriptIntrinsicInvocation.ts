@@ -71,13 +71,18 @@ export const resolveJavaScriptIntrinsicInvocation = (
   node: t.CallExpression | t.OptionalCallExpression,
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
-  intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
+  intrinsicReadChanged: (
+    node: t.Node,
+    path: readonly string[],
+    boundFunction?: JavaScriptIntrinsicInvocation["boundFunction"],
+  ) => boolean,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
   let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
     expandJavaScriptInvocationArguments(node.arguments);
   let receiver: t.Node | undefined;
+  const callableReads: t.Node[] = [];
   let explicitReceiver = false;
   for (;;) {
     callee = unwrapJavaScriptExpression(callee).node;
@@ -108,7 +113,11 @@ export const resolveJavaScriptIntrinsicInvocation = (
           const bound = boundIntrinsic(callee.object);
           if (
             bound !== undefined &&
-            intrinsicReadChanged(callee, [...bound.path, method])
+            intrinsicReadChanged(
+              callee,
+              [...bound.path, method],
+              bound.boundFunction,
+            )
           )
             return { kind: "opaque", path: bound.path, arguments: undefined };
           receiver = arguments_?.[0];
@@ -121,6 +130,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
       const bound = boundIntrinsic(callee);
       if (bound === undefined) return undefined;
       if (bound.kind === "opaque") return bound;
+      callableReads.push(...(bound.callableReads ?? []));
       path = bound.path;
       receiver = bound.receiver;
       explicitReceiver = true;
@@ -155,11 +165,18 @@ export const resolveJavaScriptIntrinsicInvocation = (
       arguments_ = arrayArguments(arguments_?.[2]);
       continue;
     }
+    const memberReceiver =
+      !explicitReceiver &&
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
+        ? callee.object
+        : undefined;
     return {
       kind: "known",
       path,
       arguments: arguments_,
+      ...(callableReads.length === 0 ? {} : { callableReads }),
       ...(receiver === undefined ? {} : { receiver }),
+      ...(memberReceiver === undefined ? {} : { memberReceiver }),
     };
   }
 };

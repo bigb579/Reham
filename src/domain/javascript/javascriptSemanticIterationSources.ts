@@ -10,11 +10,9 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import type { JavaScriptSemanticReferenceSource } from "./javascriptSemanticReferenceSources.js";
 
-interface IterationSourceValue {
-  readonly node: t.Node;
-  readonly projection: JavaScriptSemanticPropertyPath;
-}
+type IterationSourceValue = JavaScriptSemanticReferenceSource;
 
 /** An iterator receiver or property reference store, with default guards. */
 export interface SemanticIterationSource extends IterationSourceValue {
@@ -111,7 +109,7 @@ const visit = (
       ...guards,
       requiredSources: [
         ...(guards.requiredSources ?? []),
-        ...(source === undefined ? [] : [source]),
+        ...(source === undefined ? [] : [{ ...source, selection: pattern }]),
       ],
     });
     visit(
@@ -122,7 +120,7 @@ const visit = (
         ...guards,
         fallbackSources: [
           ...(guards.fallbackSources ?? []),
-          ...(source === undefined ? [] : [source]),
+          ...(source === undefined ? [] : [{ ...source, selection: pattern }]),
         ],
       },
     );

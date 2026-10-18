@@ -103,4 +103,7 @@ export const childNodes = (node: t.Node): t.Node[] => {
 
 /** Child-bearing fields; shared by traversal and structural AST comparison. */
 export const javaScriptAstChildKeys = (node: t.Node): readonly string[] =>
-  t.VISITOR_KEYS[node.type] ?? [];
+  // Babel stores legacy parameter-property decorators but omits their visitor key.
+  t.isTSParameterProperty(node) && node.decorators?.length
+    ? ["decorators", "parameter"]
+    : (t.VISITOR_KEYS[node.type] ?? []);

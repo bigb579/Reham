@@ -1,7 +1,10 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import type { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
@@ -11,7 +14,48 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
+
+const blockFunctionNames = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlySet<string>
+>();
+
+/** Annex B may copy a block function into a same-named var without an indexed
+ * assignment. Preserve the existing conservative source-wide name check until
+ * those implicit writes have an explicit scope and timing owner. */
+export const semanticBindingMayHaveBlockFunctionWrite = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !binding.declarationKinds.has("var") ||
+    javaScriptRuntimeContext(state.program) === "module"
+  )
+    return false;
+  let names = blockFunctionNames.get(state);
+  if (names === undefined) {
+    const collected = new Set<string>();
+    traverseJavaScriptAst(state.program, {
+      enter(node, parent) {
+        if (
+          t.isFunctionDeclaration(node) &&
+          node.id != null &&
+          !t.isProgram(parent) &&
+          !(
+            t.isBlockStatement(parent) &&
+            t.isFunction(state.parentsByNode.get(parent))
+          )
+        )
+          collected.add(node.id.name);
+      },
+    });
+    names = collected;
+    blockFunctionNames.set(state, names);
+  }
+  return names.has(binding.name);
+};
 
 /** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
 export interface JavaScriptOpaqueScopeEffects {
@@ -24,6 +68,30 @@ export interface JavaScriptOpaqueScopeEffects {
   readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
 }
 
+const globalEvalRoots = new Set([
+  "eval",
+  "globalThis",
+  "global",
+  "window",
+  "self",
+]);
+const possibleGlobalEvalRoots = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  t.Node[]
+>();
+
+/** Retain cheap origins in the declaration pass for capture-aware phase checks. */
+export const indexSemanticPossibleGlobalEvalRoot = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  if (!t.isIdentifier(node) || !globalEvalRoots.has(node.name)) return;
+  state.opaqueEffects.mayReferenceGlobalEval = true;
+  const roots = possibleGlobalEvalRoots.get(state) ?? [];
+  roots.push(node);
+  possibleGlobalEvalRoots.set(state, roots);
+};
+
 export const indexSemanticOpaqueEffects = (
   candidates: readonly {
     node: t.CallExpression;
@@ -35,7 +103,8 @@ export const indexSemanticOpaqueEffects = (
     const callee = unwrapJavaScriptExpression(node.callee).node;
     if (!isUnshadowedGlobal(callee, state, "eval")) continue;
     state.opaqueEffects.sites.add(node);
-    if (!strictEval(node, state)) state.opaqueEffects.sloppySites.add(node);
+    if (!semanticStrictContext(node, state))
+      state.opaqueEffects.sloppySites.add(node);
     const sites = state.opaqueEffects.byScope.get(scopeId) ?? [];
     sites.push(node);
     state.opaqueEffects.byScope.set(scopeId, sites);
@@ -52,13 +121,19 @@ export const indexSemanticOpaqueEffects = (
   }
 };
 
-/** The existing ambient invocation walk owns global effects; ordinary sources
- * neither retain a second call list nor create another alias resolver. */
+/** Share the ambient invocation walk and its completed container-store facts.
+ * Only sources referencing eval retain calls for deferred observation; the
+ * observer consumes the owner's resolver rather than rebuilding alias facts. */
 export const createSemanticOpaqueGlobalObserver = (
   state: JavaScriptSemanticAnalysisState,
+  ambientPaths: ReturnType<typeof createAmbientPathResolver>,
+  retainGlobal: (node: t.CallExpression | t.OptionalCallExpression) => void = (
+    node,
+  ) => {
+    state.opaqueEffects.globalSites.push(node);
+  },
 ): ((node: t.Node) => void) | undefined => {
   if (!state.opaqueEffects.mayReferenceGlobalEval) return undefined;
-  const ambientPaths = createAmbientPathResolver(state, true);
   let invocationSite: t.Node | undefined;
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
@@ -77,7 +152,7 @@ export const createSemanticOpaqueGlobalObserver = (
     invocationSite = node;
     const invocation = interop.intrinsicInvocation(node);
     if (invocation?.path.join(".") === "intrinsic.global.eval")
-      state.opaqueEffects.globalSites.push(node);
+      retainGlobal(node);
   };
 };
 
@@ -214,6 +289,136 @@ export const semanticOpaqueBindingReadMayHaveChanged = (
     semanticBindingMayHaveOpaqueEffect(binding, state, read)) ||
   semanticOpaqueNameMayHaveChanged(read, state, binding);
 
+/** Global eval can rebind mutable script bindings, including lexical lets.
+ * Script vars also share storage with own global properties. Consume the
+ * ambient owner's canonical writes; CommonJS and module bindings are local. */
+export type SemanticGlobalBindingFacts = Pick<
+  JavaScriptSemanticAnalysisState,
+  "ambientWrites" | "ambientWriteEffects"
+> & {
+  /** False while global writes or deferred global eval are still unexamined. */
+  readonly complete?: boolean;
+  readonly opaqueGlobalSites?: readonly t.Node[];
+};
+
+interface AmbientWriteCandidates {
+  indexed: number;
+  readonly roots: Map<
+    string,
+    {
+      readonly owners: Map<string, JavaScriptSemanticMemberEffect[]>;
+      readonly broad: JavaScriptSemanticMemberEffect[];
+    }
+  >;
+  readonly broad: JavaScriptSemanticMemberEffect[];
+}
+
+// The ambient producer appends immutable effects. Share one linear-size index
+// per snapshot, extending it for later appends without retaining another AST.
+const ambientWriteCandidates = new WeakMap<
+  readonly JavaScriptSemanticMemberEffect[],
+  AmbientWriteCandidates
+>();
+
+/** Select possible owner prefixes; the full path and caller proof still decide. */
+export const semanticAmbientWriteMayMatch = (
+  facts: SemanticGlobalBindingFacts,
+  path: readonly string[],
+  predicate: (effect: JavaScriptSemanticMemberEffect) => boolean,
+): boolean => {
+  const effects = facts.ambientWriteEffects;
+  let candidates = ambientWriteCandidates.get(effects);
+  if (candidates === undefined) {
+    candidates = { indexed: 0, roots: new Map(), broad: [] };
+    ambientWriteCandidates.set(effects, candidates);
+  }
+  for (; candidates.indexed < effects.length; candidates.indexed += 1) {
+    const effect = effects[candidates.indexed]!;
+    const [root, owner] = effect.path;
+    if (typeof root !== "string" && typeof root !== "number") {
+      candidates.broad.push(effect);
+      continue;
+    }
+    let group = candidates.roots.get(String(root));
+    if (group === undefined) {
+      group = { owners: new Map(), broad: [] };
+      candidates.roots.set(String(root), group);
+    }
+    if (typeof owner !== "string" && typeof owner !== "number")
+      group.broad.push(effect);
+    else {
+      const selected = group.owners.get(String(owner)) ?? [];
+      selected.push(effect);
+      group.owners.set(String(owner), selected);
+    }
+  }
+  const matches = (effect: JavaScriptSemanticMemberEffect) =>
+    effect.path.length <= path.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, path[index]!),
+    ) &&
+    predicate(effect);
+  const group =
+    path[0] === undefined ? undefined : candidates.roots.get(path[0]);
+  return (
+    candidates.broad.some(matches) ||
+    (group?.broad.some(matches) ?? false) ||
+    (path[1] !== undefined &&
+      (group?.owners.get(path[1])?.some(matches) ?? false))
+  );
+};
+
+export const semanticGlobalBindingReadMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  facts: SemanticGlobalBindingFacts = state,
+): boolean => {
+  if (
+    !semanticBindingCanBeRebound(binding) ||
+    state.scopesById.get(binding.scopeId)?.kind !== "program" ||
+    javaScriptRuntimeContext(state.program) !== "unknown"
+  )
+    return false;
+  if (
+    facts.complete === false &&
+    (binding.declarationKinds.has("var") ||
+      (possibleGlobalEvalRoots
+        .get(state)
+        ?.some((root) => semanticEffectTiming(read, root, state) !== "after") ??
+        state.opaqueEffects.mayReferenceGlobalEval))
+  )
+    return true;
+  if (
+    (facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
+      (effect) => semanticEffectTiming(read, effect, state) !== "after",
+    )
+  )
+    return true;
+  if (
+    !binding.declarationKinds.has("var") ||
+    !facts.ambientWrites.covers(["global", binding.name])
+  )
+    return false;
+  const initializer =
+    binding.initializers.length === 1
+      ? binding.initializers[0]?.node
+      : undefined;
+  const bindingPath = ["global", binding.name];
+  return semanticAmbientWriteMayMatch(
+    facts,
+    bindingPath,
+    ({ node }) =>
+      semanticEffectTiming(read, node, state) !== "after" &&
+      // Initialization replaces earlier assigned values. Reflective writes may
+      // instead change a descriptor and prevent that initialization, so keep
+      // them without trying to infer the host property's descriptor state.
+      (initializer === undefined ||
+        !t.isAssignmentExpression(node) ||
+        semanticEffectTiming(initializer, node, state) !== "before"),
+  );
+};
+
 const activation = (
   scopeId: string,
   state: JavaScriptSemanticAnalysisState,
@@ -229,7 +434,8 @@ const activation = (
   return scope?.scopeId ?? scopeId;
 };
 
-const strictEval = (
+/** Runtime syntax, rather than erased TypeScript imports, establishes strictness. */
+export const semanticStrictContext = (
   site: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
@@ -238,7 +444,10 @@ const strictEval = (
     node !== undefined;
     node = state.parentsByNode.get(node)
   ) {
-    if (t.isClass(node) || (t.isProgram(node) && node.sourceType === "module"))
+    if (
+      t.isClass(node) ||
+      (t.isProgram(node) && javaScriptRuntimeContext(node) === "module")
+    )
       return true;
     const directives = t.isProgram(node)
       ? node.directives

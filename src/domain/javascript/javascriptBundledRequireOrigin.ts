@@ -55,7 +55,9 @@ const proofs = new WeakMap<
 export const semanticBundledRequireOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptRequireOrigin | undefined => {
+):
+  | (JavaScriptRequireOrigin & { readonly call: t.CallExpression })
+  | undefined => {
   const chain = semanticMemberChain(node);
   const current = chain?.root;
   if (
