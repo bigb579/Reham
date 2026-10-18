@@ -61,6 +61,7 @@ export const registerWebNetworkCaptureCommands = (
               "inspect_web_network_capture",
               signal,
               "Web network capture resources",
+              signal,
             );
           },
         ),
