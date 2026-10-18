@@ -427,3 +427,66 @@ it("parses the Rizin inferior TTY as an option and passes it to the manager", as
     inferiorTty: "/dev/pts/7",
   });
 });
+
+it("runs execute-radare2-command through the reverse-engineering service", async () => {
+  const evidence = createEvidence(
+    undefined,
+    { id: "radare2", name: "Radare2", version: null },
+    {
+      predicateType: "rea.reverse-engineering.command-observation",
+      operation: "execute_radare2_command",
+      parameters: { path: "/tmp/sample", command: "ij" },
+      result: { completion_status: "complete" },
+      rawResult: { completion_status: "complete" },
+    },
+  );
+  const executeRadare2Command = vi.fn(async () => ok(evidence));
+  const commands = new Map<
+    string,
+    {
+      run(input: {
+        args: Record<string, unknown>;
+        options: Record<string, unknown>;
+      }): Promise<unknown>;
+    }
+  >();
+  const cli = {
+    command: (
+      name: string,
+      definition: {
+        run(input: {
+          args: Record<string, unknown>;
+          options: Record<string, unknown>;
+        }): Promise<unknown>;
+      },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    () =>
+      ({
+        executeRadare2Command,
+        close: vi.fn(async () => undefined),
+      }) as unknown as ReverseEngineeringService,
+  );
+  const command = commands.get(CLI_COMMANDS.executeRadare2Command);
+  if (command === undefined)
+    throw new Error("Radare2 CLI command was not registered");
+
+  const result = await command.run({
+    args: { path: "/tmp/sample", command: "ij" },
+    options: {},
+  });
+
+  expect(result).toEqual(evidence);
+  expect(executeRadare2Command).toHaveBeenCalledWith(
+    { path: "/tmp/sample", command: "ij" },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
