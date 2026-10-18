@@ -499,6 +499,9 @@ export class IdaSessionClient implements AnalysisClient {
             { kind: "artifact-path", path: this.target.path },
             ...runner.locations,
           ],
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
         }),
       );
     }
