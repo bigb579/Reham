@@ -6,7 +6,15 @@ For captured or bundled JavaScript that needs readable source recovery, use
 `additional_paths` when advertised, then analyze the returned `analysis_input`
 directory together. Each input retains its own snapshot, digest and byte-range
 provenance; inputs and recovered code are never executed. Recovery requires a
-caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/javascript-recovery.md).
+caller-supplied Wakaru named by absolute path in `REA_WAKARU_COMMAND`; any host
+that can execute that binary is admitted, and Linux x64 is the only fully
+verified host. On other hosts the result reports the host as unverified.
+Whether the 1 GiB address-space ceiling is applied depends on a usable limiter,
+not on the host: util-linux `prlimit` is probed at `/usr/bin/prlimit`, and
+`REA_JAVASCRIPT_PRLIMIT_COMMAND` names a `prlimit`-compatible wrapper on any
+host. Without a usable limiter the worker runs unwrapped and the result lists
+the absent ceiling under `limitations`. See
+[the recovery guide](https://github.com/morluto/rea/blob/main/docs/javascript-recovery.md).
 
 Use `analyze_javascript_application` directly on the operator-supplied ASAR or
 extracted tree. When the question concerns known source paths and the connected
