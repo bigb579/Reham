@@ -76,7 +76,8 @@ export function* collectJavaScriptIdentityWritesSteps(
       | t.CallExpression
       | t.OptionalCallExpression
       | t.NewExpression
-      | t.TaggedTemplateExpression,
+      | t.TaggedTemplateExpression
+      | t.AwaitExpression,
     invocation: JavaScriptIntrinsicInvocation | undefined,
   ) => void,
 ): Generator<void> {
@@ -95,6 +96,10 @@ export function* collectJavaScriptIdentityWritesSteps(
   const keyedMutators = new Set(["set", "deleteProperty", "defineProperty"]);
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
+      if (t.isAwaitExpression(node)) {
+        observeInvocation?.(node, undefined);
+        return;
+      }
       if (
         t.isCallExpression(node) ||
         t.isOptionalCallExpression(node) ||

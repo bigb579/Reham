@@ -11,6 +11,113 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 
+const candidateSources = {
+  "escaped.mjs": `const box = {};
+  box.prototype = Map.prototype;
+  function patch(b) { b.prototype.get = fetch; }
+  patch(box); new Map().get("/escaped");`,
+  "returned.mjs": 'patch((() => Map.prototype)()); new Map().get("/returned");',
+  "opaque.mjs": 'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
+  "private.mjs":
+    'const box = {}; box.prototype = Map.prototype; new Map().get("/private");',
+  "returned-write.mjs":
+    'const prototype = (() => Map.prototype)(); prototype.get = fetch; new Map().get("/returned-write");',
+  "prototype.mjs":
+    'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
+  "indirect.mjs":
+    'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
+  "late-link.mjs":
+    'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/late-link");',
+  "constructor.mjs":
+    'new Map().constructor.prototype.get = fetch; new Map().get("/constructor");',
+  "getter.mjs":
+    'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/getter");',
+  "assignment.mjs":
+    'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/assignment");',
+  "logical-assignment.mjs":
+    'let run; (run ??= eval)("Map.prototype.get = fetch"); new Map().get("/logical-assignment");',
+  "method.mjs":
+    'const box = { prototype() { return Map.prototype; } }; patch(box); new Map().get("/method");',
+  "stored-eval.mjs":
+    'const box = {}; box.run = eval; box.run("Map.prototype.get = fetch"); new Map().get("/stored-eval");',
+  "generated.mjs":
+    'Function("Map.prototype.get = fetch")(); new Map().get("/generated");',
+  "generated-constructor.mjs":
+    'const Run = Function("Map.prototype.get = fetch"); Reflect.construct(Run, []); new Map().get("/generated-constructor");',
+  "generated-constructor-unused.mjs":
+    'Reflect.construct(Function, ["Map.prototype.get = fetch"]); new Map().get("/generated-constructor-unused");',
+  "awaited-generated.mjs":
+    'const run = await Function("Map.prototype.get = fetch"); run(); new Map().get("/awaited-generated");',
+  "escaped-class.mjs":
+    'patch(class { static expose() { return Map.prototype; } }); new Map().get("/escaped-class");',
+  "escaped-generated.mjs":
+    'consume(Function("Map.prototype.get = fetch")); new Map().get("/escaped-generated");',
+  "mixed-callable.mjs":
+    'function inspect(consume, condition) { const Target = condition ? Function : consume; Target(Function("Map.prototype.get = fetch")); new Map().get("/mixed-callable"); } inspect(run => run(), false);',
+  "inherited-factory.mjs":
+    'Function.constructor("Map.prototype.get = fetch")(); new Map().get("/inherited-factory");',
+  "inherited-factory-unused.mjs":
+    'Function.constructor("Map.prototype.get = fetch"); new Map().get("/inherited-factory-unused");',
+  "bound-eval.mjs":
+    'function consume(run) { run(); } const run = eval.bind(null, "Map.prototype.get = fetch"); consume(run); new Map().get("/bound-eval");',
+  "generated-superclass.mjs":
+    'class Run extends Function("Map.prototype.get = fetch") {} new Run(); new Map().get("/generated-superclass");',
+  "generated-class-call.mjs":
+    'class Run extends Function("Map.prototype.get = fetch") {} Run.call(null); new Map().get("/generated-class-call");',
+  "frozen-generated.mjs":
+    'Object.freeze(Function("Map.prototype.get = fetch")); new Map().get("/frozen-generated");',
+  "frozen-generated-executed.mjs":
+    'const run = Object.freeze(Function("Map.prototype.get = fetch")); run(); new Map().get("/frozen-generated-executed");',
+  "dynamic-apply.mjs":
+    'const callbacks = [Function("Map.prototype.get = fetch")]; Reflect.apply(consume, null, callbacks); new Map().get("/dynamic-apply");',
+  "factory-coercion.mjs":
+    'const source = { toString: Function("Map.prototype.get = fetch; return 1") }; Function(source); new Map().get("/factory-coercion");',
+  "bound-factory-coercion.mjs":
+    'const source = { toString: Function("Map.prototype.get = fetch; return 1") }; const Make = Function.bind(null, source); Reflect.construct(Make, []); new Map().get("/bound-factory-coercion");',
+  "arrow-superclass.mjs":
+    'class Run extends Function("Map.prototype.get = fetch") { constructor() { (() => super())(); } } new Run(); new Map().get("/arrow-superclass");',
+  "awaited-thenable.mjs":
+    'await { then: Function("resolve", "Map.prototype.get = fetch; resolve()") }; new Map().get("/awaited-thenable");',
+  "spread-constructor.mjs":
+    'const callbacks = [Function("Map.prototype.get = fetch")]; Reflect.construct(function Run(fn) { fn(); }, [...callbacks]); new Map().get("/spread-constructor");',
+  "mixed-destination.mjs":
+    'function expose(external) { const box = condition ? {} : external; box.p = Map.prototype; } expose(holder); patch(holder); new Map().get("/mixed-destination");',
+};
+
+const candidateEndpoints = [
+  "/api/items",
+  "/arrow-superclass",
+  "/assignment",
+  "/awaited-generated",
+  "/awaited-thenable",
+  "/bound-eval",
+  "/bound-factory-coercion",
+  "/constructor",
+  "/dynamic-apply",
+  "/escaped",
+  "/escaped-class",
+  "/escaped-generated",
+  "/factory-coercion",
+  "/frozen-generated-executed",
+  "/generated",
+  "/generated-constructor",
+  "/generated-superclass",
+  "/getter",
+  "/indirect",
+  "/inherited-factory",
+  "/late-link",
+  "/logical-assignment",
+  "/method",
+  "/mixed-callable",
+  "/mixed-destination",
+  "/opaque",
+  "/prototype",
+  "/returned",
+  "/returned-write",
+  "/spread-constructor",
+  "/stored-eval",
+];
+
 it("reports a candidate endpoint through the worker boundary in the public CLI", async () => {
   const root = await createTestTempDirectory("rea-endpoint-candidate-cli-");
   // Retain ambiguous requests while excluding type-erased collection/config reads.
@@ -40,32 +147,7 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     (cache.open as any)("fixture-cache");
   `,
   );
-  for (const [name, source] of Object.entries({
-    "escaped.mjs": `const box = {};
-    box.prototype = Map.prototype;
-    function patch(b) { b.prototype.get = fetch; }
-    patch(box); new Map().get("/escaped");`,
-    "returned.mjs":
-      'patch((() => Map.prototype)()); new Map().get("/returned");',
-    "opaque.mjs":
-      'eval("Map.prototype.get = fetch"); new Map().get("/opaque");',
-    "private.mjs":
-      'const box = {}; box.prototype = Map.prototype; new Map().get("/private");',
-    "returned-write.mjs":
-      'const prototype = (() => Map.prototype)(); prototype.get = fetch; new Map().get("/returned-write");',
-    "prototype.mjs":
-      'Object.getPrototypeOf(new Map()).get = fetch; new Map().get("/prototype");',
-    "indirect.mjs":
-      'globalThis.eval("Map.prototype.get = fetch"); new Map().get("/indirect");',
-    "late-link.mjs":
-      'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/late-link");',
-    "constructor.mjs":
-      'new Map().constructor.prototype.get = fetch; new Map().get("/constructor");',
-    "getter.mjs":
-      'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/getter");',
-    "assignment.mjs":
-      'let run; (run = eval)("Map.prototype.get = fetch"); new Map().get("/assignment");',
-  }))
+  for (const [name, source] of Object.entries(candidateSources))
     await writeFile(join(root, name), source);
   const { stdout } = await execute(
     process.execPath,
@@ -86,32 +168,40 @@ it("reports a candidate endpoint through the worker boundary in the public CLI",
     )
     .toEqual([
       "/api/items",
+      "/arrow-superclass",
       "/assignment",
+      "/awaited-generated",
+      "/awaited-thenable",
+      "/bound-eval",
+      "/bound-factory-coercion",
       "/constructor",
+      "/dynamic-apply",
       "/escaped",
+      "/escaped-class",
+      "/escaped-generated",
+      "/factory-coercion",
+      "/frozen-generated-executed",
+      "/generated",
+      "/generated-constructor",
+      "/generated-superclass",
       "/getter",
       "/indirect",
+      "/inherited-factory",
       "/late-link",
+      "/logical-assignment",
+      "/method",
+      "/mixed-callable",
+      "/mixed-destination",
       "/network",
       "/opaque",
       "/prototype",
       "/returned",
       "/returned-write",
+      "/spread-constructor",
+      "/stored-eval",
       "session",
     ]);
-  for (const value of [
-    "/api/items",
-    "/assignment",
-    "/constructor",
-    "/escaped",
-    "/getter",
-    "/indirect",
-    "/late-link",
-    "/opaque",
-    "/prototype",
-    "/returned",
-    "/returned-write",
-  ]) {
+  for (const value of candidateEndpoints) {
     const escaped = result.graph.nodes.find(
       ({ kind, observations }) =>
         kind === "endpoint" &&

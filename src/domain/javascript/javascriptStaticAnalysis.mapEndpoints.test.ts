@@ -25,6 +25,68 @@ it("does not classify a local Map lookup as a network endpoint", () => {
 });
 
 it.each([
+  "condition ? {} : external",
+  "condition ? external : {}",
+  "external || {}",
+  "external ?? {}",
+  "external && {}",
+  "condition ? {} : unknownFactory()",
+  "condition ? unknownFactory() : {}",
+  "({ slot: external }).slot",
+  "({ slot: condition ? {} : external }).slot",
+  "[{}, external][index]",
+  "({ get slot() { return condition ? {} : external; } }).slot",
+])(
+  "retains an unresolved destination alongside private identities: %s",
+  (destination) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    function expose(external) {
+      const box = ${destination};
+      box.p = Map.prototype;
+    }
+    expose(holder); patch(holder); new Map().get('/accounts');
+  `);
+    expect(analysis.endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/accounts",
+        interpretation: "candidate",
+      }),
+    );
+  },
+);
+
+it.each([
+  "condition ? {} : {}",
+  "({ slot: {} }).slot",
+  "({ slot: condition ? {} : {} }).slot",
+  "[{}][0]",
+  "(() => { const inner = {}; return condition ? inner : inner; })()",
+])("keeps every proven private destination private: %s", (destination) => {
+  expect(
+    analyzeJavaScriptStaticSource(`
+    function keep() { const box = ${destination}; box.p = Map.prototype; }
+    keep(); new Map().get('/accounts');
+  `).endpoints,
+  ).toEqual([]);
+});
+
+it("keeps an unresolved alias cycle distinct from a private alternative", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    function expose() {
+      const cyclic = condition ? {} : cyclic;
+      cyclic.p = Map.prototype;
+    }
+    expose(); new Map().get('/accounts');
+  `);
+  expect(analysis.endpoints).toContainEqual(
+    expect.objectContaining({
+      value: "/accounts",
+      interpretation: "candidate",
+    }),
+  );
+});
+
+it.each([
   'const records = new Map(); const alias = records; alias.get("/accounts"); records.delete("/accounts"); alias.get("/accounts")',
   'new Map().get("/accounts")',
   'new Map().delete("https://example.test/accounts")',
@@ -42,6 +104,8 @@ it.each([
   'const box = {}; box.a = {}; box.a.p = Map.prototype; box.safe = {}; patch(box.safe); new Map().get("/accounts")',
   'const records = new Map(); records.get = fetch; new Map().get("/accounts")',
   'const holder = { get prototype() { return Map.prototype; } }; new Map().get("/accounts")',
+  'const box = { prototype() { return Map.prototype; } }; new Map().get("/accounts")',
+  'const box = { prototype() { return {}; } }; patch(box); new Map().get("/accounts")',
   'const holder = { get selected() { return {}; }, get other() { return Map.prototype; } }; holder.selected.get = fetch; new Map().get("/accounts")',
   'function Map() {} new Map().constructor.prototype.get = fetch; globalThis.Map.prototype; new globalThis.Map().get("/accounts")',
   'const factory = { make() { return {}; } }; factory.make = () => ({}); patch(factory.make()); new Map().get("/accounts")',
@@ -89,6 +153,8 @@ it.each([
   'const holder = { get prototype() { return Map.prototype; } }; holder.prototype.get = fetch; new Map().get("/accounts")',
   'const holder = { get ["prototype"]() { return { nested: Map.prototype }; } }; holder.prototype.nested.get = fetch; new Map().get("/accounts")',
   'const holder = { get prototype() { return Map.prototype; } }; patch(holder); new Map().get("/accounts")',
+  'const box = { prototype() { return Map.prototype; } }; patch(box); new Map().get("/accounts")',
+  'const box = { ["prototype"]() { return { nested: Map.prototype }; } }; patch(box); new Map().get("/accounts")',
   'function store() { box.child.prototype = Map.prototype; } const box = {}; const inner = {}; box.child = inner; store(); patch(inner); new Map().get("/accounts")',
   'function store() { box.child.next.prototype = Map.prototype; } const box = {}; const middle = {}; const inner = {}; middle.next = inner; box.child = middle; store(); patch(inner); new Map().get("/accounts")',
   'const records = new Map(); Object.getPrototypeOf(records).get = fetch; new Map().get("/accounts")',
