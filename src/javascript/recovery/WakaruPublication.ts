@@ -18,7 +18,7 @@ import {
   type parseWakaruReports,
 } from "./WakaruReport.js";
 import {
-  RECOVERY_LIMITATIONS,
+  recoveryLimitationsFor,
   RECOVERY_LIMITS,
   WAKARU_RELEASE,
 } from "./WakaruRelease.js";
@@ -143,7 +143,7 @@ export const publishWakaruArtifacts = async (
           },
     runtime_equivalence: "unknown" as const,
     limitations: [
-      ...RECOVERY_LIMITATIONS,
+      ...recoveryLimitationsFor(context.engine.host),
       ...(context.admitted.status === "compatible"
         ? [context.admitted.limitation]
         : []),

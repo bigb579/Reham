@@ -7,7 +7,9 @@ never executes the selected or recovered application code.
 
 ## Caller-supplied engine
 
-REA accepts Wakaru **^1.13.0** on Linux x64. The report parser is verified with
+REA accepts Wakaru **^1.13.0** on any host that can execute the configured binary;
+**Linux x64 is the only fully verified host** and other hosts are reported as
+unverified. The report parser is verified with
 Wakaru **1.14.0**. Another release in that range is accepted, the observed
 version is reported, and a limitation records that the parser was not verified
 against that release. Wakaru changes `--version`, `--json` and `provenance.json`
@@ -16,10 +18,41 @@ only by addition within a major version
 so the parser keeps unknown report fields and reported module statuses.
 
 Set `REA_WAKARU_COMMAND` to the absolute path of an executable supplied by the
-caller. The adapter uses util-linux `prlimit` (default `/usr/bin/prlimit`;
-override with an absolute `REA_JAVASCRIPT_PRLIMIT_COMMAND`). REA does not install
-either tool. Engine configuration is checked only when recovery is requested;
-other REA capabilities remain available without it.
+caller. The caller takes responsibility for that binary on every host.
+
+The binary is launched as an owned provider process, so on macOS it also needs
+Apple's Swift compiler through `xcrun`: REA compiles its process-inspection
+helper before starting any owned provider process.
+
+Owned launches also gate availability on Windows. Every call is started through
+`WindowsOwnedProcess`, which requires the packaged x64 native authority, so REA
+does not advertise the tool on a Windows host that cannot supply it — a non-x64
+Windows host, or one whose `rea-windows-x64.node` artifact is missing, stale, or
+unproven — rather than offering a tool whose every call fails before Wakaru
+starts. Run `rea doctor` on such a host to see the reported native failure. A missing compiler fails the
+launch even when the Wakaru binary itself is correct. Install the Xcode Command
+Line Tools (`xcode-select --install`) or Xcode; REA does not install them. The
+same prerequisite gates process ownership inspection on macOS, so
+[process capture](process-capture.md) also documents the `REA_DARWIN_SWIFTC_PATH`
+and `SDKROOT` overrides for hosts without a default compiler or SDK.
+
+Where util-linux `prlimit` is present the adapter bounds the worker with it
+(default `/usr/bin/prlimit`, probed at call time; override with an absolute
+`REA_JAVASCRIPT_PRLIMIT_COMMAND`). Hosts without util-linux, macOS included and
+Linux images that omit it, have no such binary, so the 1 GiB address-space
+ceiling is not a hard requirement: point `REA_JAVASCRIPT_PRLIMIT_COMMAND` at a
+wrapper that accepts the same flags (for example
+`--as= --fsize= --core= --cpu= -- command args...`) and maps them to the local
+`ulimit` equivalents, and the ceiling comes back. An explicitly configured
+limiter is authoritative: if it is not an executable regular file the call fails
+closed instead of silently dropping the ceiling. Without any usable limiter the
+operation still runs: the first call emits one warning — a `rea_warning` JSON
+line on stderr for the CLI (the CLI logger is silent by default), a logger
+warning for MCP — and every result lists the absent ceiling under
+`limitations`. REA does not install either tool. The
+120-second deadline and the input/output byte and entry ceilings are enforced
+in-process on every host. Engine configuration is checked only when recovery is
+requested; other REA capabilities remain available without it.
 
 Unmodified upstream source is retained in `third_party/wakaru`, pinned to
 `8219bf5016a063d7fb215101a8c45d5959ec733f` (v1.14.0, Apache-2.0).
@@ -129,16 +162,21 @@ equivalence remain unknown. No network fetching occurs.
 
 ## Resource policy and verification
 
-Each operation uses one worker, a 1 GiB address-space ceiling and a 120-second
-deadline; it accepts up to 64 MiB of total input across all selected files and
-128 MiB/10000 entries of staged
-output, with 8 MiB per diagnostic/report stream. Exceeding a limit is an explicit
-failure with rollback. Selected inputs beyond the total input allowance return a
-non-retryable `resource_constraint` with `resource: "file-size"` and
+Each operation uses one worker and a 120-second deadline; it accepts up to
+64 MiB of total input across all selected files and 128 MiB/10000 entries of
+staged output, with 8 MiB per diagnostic/report stream. Those rails are enforced
+in-process on every host. The 1 GiB address-space ceiling, and the file-size,
+core-dump and cpu-time rails that come with it, exist only where a resolved
+resource limiter can express util-linux `--as`: a host without a usable
+`prlimit` (see setup above) runs without them, and every result states that under
+`limitations`. Exceeding a limit is an explicit failure with rollback. Selected
+inputs beyond the total input allowance return a non-retryable
+`resource_constraint` with `resource: "file-size"` and
 `reported_limits.maximum_input_bytes`/`remaining_input_bytes`; input that is not
 valid UTF-8 is an `invalid_format` request issue. These limits apply per
 operation and do not claim aggregate host containment across concurrent callers.
 
 See [testing.md](testing.md#javascript-source-recovery) for the focused real
-Wakaru CLI/MCP lane and its source-owned compiler fixtures. Other host platforms
-and Bun/Vue recovery are not claimed by this adapter.
+Wakaru CLI/MCP lane and its source-owned compiler fixtures. Hosts other than
+linux-x64 run the same protocol against the caller-supplied binary and are
+reported as unverified; Bun/Vue recovery is not claimed by this adapter.

@@ -48,6 +48,7 @@ import {
 } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
 import { isAbsolute } from "node:path";
+import { providerProcessOwnershipAvailable } from "../process/ProviderProcessOwnership.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
@@ -193,6 +194,24 @@ const installSessionToolAvailability = (
 ) => {
   if (session === undefined) return undefined;
   const linux = process.platform === "linux";
+  /**
+   * Wakaru only needs a caller-supplied binary. Linux uses util-linux prlimit by
+   * default; elsewhere a missing limiter degrades the operation to "no
+   * address-space ceiling" with a one-time warning instead of making it
+   * unreachable, so availability must not depend on that variable.
+   */
+  const javascriptRecoveryConfigured = (
+    env: Readonly<NodeJS.ProcessEnv>,
+  ): boolean => isAbsolute(env.REA_WAKARU_COMMAND ?? "");
+  /**
+   * Every invocation is launched as an owned provider process, which on Windows
+   * means `WindowsOwnedProcess` and therefore the packaged x64 native authority.
+   * A Windows host without it — a non-x64 architecture or a missing artifact —
+   * fails before the binary starts, so it must not be advertised as available.
+   * Only queried when a binary is configured, so no other host pays for it.
+   */
+  const providerProcessOwnershipReady = (): boolean =>
+    providerProcessOwnershipAvailable();
   const linuxX64 = linux && process.arch === "x64";
   const pwntools =
     linuxX64 && isAbsolute(environment.REA_PWNTOOLS_PYTHON ?? "");
@@ -221,9 +240,20 @@ const installSessionToolAvailability = (
         options.firmwareAnalysis !== undefined ||
         (linux && isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
-      javascriptRecoveryEnabled:
-        options.javascriptRecovery !== undefined ||
-        (linuxX64 && isAbsolute(environment.REA_WAKARU_COMMAND ?? "")),
+      /**
+       * Ownership readiness is a cached probe that retries a transient
+       * self-test failure on its next query, so it is read per policy
+       * evaluation instead of being frozen when this literal is built: a
+       * startup-time failure must not keep recovery hidden for the whole
+       * process. Spreading this object into another would silently freeze it.
+       */
+      get javascriptRecoveryEnabled(): boolean {
+        return (
+          options.javascriptRecovery !== undefined ||
+          (javascriptRecoveryConfigured(environment) &&
+            providerProcessOwnershipReady())
+        );
+      },
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
       electronAutomationEnabled:
@@ -315,8 +345,19 @@ export const createServer = (
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
+  const logger = options.logger ?? silentLogger;
   const javascriptRecovery =
-    options.javascriptRecovery ?? createJavaScriptRecoveryProvider(environment);
+    options.javascriptRecovery ??
+    createJavaScriptRecoveryProvider(environment, undefined, (event) => {
+      logger.child({ layer: "javascript-recovery" }).warn(
+        {
+          platform: event.platform,
+          arch: event.arch,
+          environment_variable: "REA_JAVASCRIPT_PRLIMIT_COMMAND",
+        },
+        event.message,
+      );
+    });
   const artifactResources = new ArtifactResourceScope();
   const reverseEngineering =
     createReverseEngineeringService(providerEnvironment);
@@ -336,7 +377,6 @@ export const createServer = (
     javascriptRecovery,
   };
   const startedAt = new Date().toISOString();
-  const logger = options.logger ?? silentLogger;
   const server = createMcpServer(
     session,
     delivery,
