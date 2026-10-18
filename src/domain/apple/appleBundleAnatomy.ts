@@ -306,6 +306,21 @@ const namedFile = (
   return name === null ? null : joinPath(directory, name);
 };
 
+/** Select directory identity before applying the anatomy name preference. */
+const namedDirectory = (
+  tree: Tree,
+  directory: string,
+  expected: string,
+): string | null => {
+  const names = new Set(
+    [...(tree.children.get(directory) ?? [])].filter((name) =>
+      tree.directories.has(joinPath(directory, name)),
+    ),
+  );
+  const name = anatomyChild(names, expected);
+  return name === null ? null : joinPath(directory, name);
+};
+
 const infoPlistPath = (
   bundle: string,
   layout: Bundle["layout"],
