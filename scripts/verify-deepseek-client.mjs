@@ -26,8 +26,7 @@ const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
 const target = join(workspace, "fixture α测试");
 const skillPath = join(
-  account,
-  ".agents",
+  profile,
   "skills",
   "reverse-engineer-anything",
   "SKILL.md",
@@ -389,8 +388,7 @@ try {
     modelFixture:
       "loopback custom OpenAI-compatible adapter; no live DeepSeek provider claim",
     modelContextWindow: 1000000,
-    skillDiscovery:
-      "native HOME shared personal directory; isolated project root",
+    skillDiscovery: "native Harness home user directory; isolated project root",
     catalogSize: catalog?.length,
     patternCount,
     uniquePatterns: patterns.size,
